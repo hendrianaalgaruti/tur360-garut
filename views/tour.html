@@ -1,0 +1,1436 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Tur Virtual 360° Interaktif</title>
+  
+  <!-- Font & Icons -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Plus Jakarta Sans', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            brand: {
+              50: '#f0f9ff',
+              400: '#38bdf8',
+              500: '#0ea5e9',
+              600: '#0284c7',
+              700: '#0369a1',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Pannellum 360 WebGL Engine -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css" />
+  <script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+
+  <!-- Deteksi Sub-Path Deployment cPanel (/tur360) & Auto-Prefix Fetch/Asset -->
+  <script>
+    (function() {
+      const isTur360 = window.location.pathname.startsWith('/tur360');
+      window.APP_BASE = isTur360 ? '/tur360' : '';
+
+      const origFetch = window.fetch;
+      window.fetch = function(input, init) {
+        if (typeof input === 'string') {
+          if (input.startsWith('/api') || input.startsWith('/uploads') || input.startsWith('/static') || input.startsWith('/views')) {
+            input = window.APP_BASE + input;
+          }
+        }
+        return origFetch.call(this, input, init);
+      };
+    })();
+  </script>
+
+  <!-- Custom Hotspot & Animation Styles -->
+  <link id="tour-stylesheet" rel="stylesheet" href="/static/tour.css" />
+  <script>
+    if (window.APP_BASE) {
+      document.getElementById('tour-stylesheet').href = window.APP_BASE + '/static/tour.css';
+    }
+  </script>
+
+  <style>
+    :root {
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --safe-left: env(safe-area-inset-left, 0px);
+      --safe-right: env(safe-area-inset-right, 0px);
+    }
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #020617;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      touch-action: manipulation;
+    }
+    #panorama-container {
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1;
+    }
+    #panorama-backdrop {
+      position: absolute;
+      inset: 0;
+      background-size: cover;
+      background-position: center;
+      filter: blur(14px) brightness(0.65);
+      transform: scale(1.08);
+      z-index: 0;
+      transition: opacity 0.8s ease;
+    }
+    #scene-transition-overlay {
+      position: absolute;
+      inset: 0;
+      background-color: #020617;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+      z-index: 45;
+    }
+    #scene-transition-overlay.active {
+      opacity: 0.92;
+      pointer-events: auto;
+    }
+    .pnlm-load-box {
+      display: none !important;
+      opacity: 0 !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
+    }
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+
+    /* Hotspot Style Kustom */
+    .custom-hotspot-nav, .custom-hotspot-info {
+      cursor: pointer;
+      z-index: 2;
+    }
+    .custom-hotspot-nav .hotspot-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 9999px;
+      background: radial-gradient(circle, rgba(14,165,233,0.95) 0%, rgba(2,132,199,0.85) 100%);
+      border: 2px solid #ffffff;
+      box-shadow: 0 0 15px rgba(56, 189, 248, 0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+      animation: pulse-ring 2.2s infinite;
+    }
+    .custom-hotspot-info .hotspot-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 9999px;
+      background: radial-gradient(circle, rgba(245,158,11,0.95) 0%, rgba(217,119,6,0.85) 100%);
+      border: 2px solid #ffffff;
+      box-shadow: 0 0 15px rgba(245, 158, 11, 0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+      animation: pulse-ring 2.2s infinite;
+    }
+    .custom-hotspot-nav:hover .hotspot-icon,
+    .custom-hotspot-info:hover .hotspot-icon {
+      transform: scale(1.18);
+    }
+    .hotspot-tooltip-card {
+      position: absolute;
+      top: 42px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #ffffff;
+      padding: 6px 12px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+      pointer-events: none;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(8px);
+      opacity: 0.95;
+    }
+    @keyframes pulse-ring {
+      0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7); }
+      70% { box-shadow: 0 0 0 14px rgba(56, 189, 248, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+    }
+
+    /* ==========================================================================
+       MEDIA QUERIES RESPONSIVITAS MOBILE (SAMSUNG GALAXY A55, IPHONE, ANDROID)
+       ========================================================================== */
+    @media (max-width: 640px) {
+      /* Header atas lebih kompak dalam satu baris fleksibel tanpa overlap */
+      header {
+        top: calc(8px + var(--safe-top)) !important;
+        left: calc(8px + var(--safe-left)) !important;
+        right: calc(8px + var(--safe-right)) !important;
+        gap: 6px !important;
+      }
+      .header-info-box {
+        max-width: 220px !important;
+        padding: 5px 8px !important;
+        border-radius: 1rem !important;
+      }
+      .header-title-text {
+        max-width: 110px !important;
+        font-size: 11px !important;
+      }
+
+      /* RADAR MOBILE: Floating Action Button (FAB) Mini Bulat 44px di Pojok Kiri */
+      #radar-widget {
+        top: auto !important;
+        bottom: calc(86px + var(--safe-bottom)) !important;
+        left: calc(10px + var(--safe-left)) !important;
+        width: 44px !important;
+        height: 44px !important;
+        border-radius: 9999px !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+        box-shadow: 0 10px 28px rgba(0,0,0,0.75) !important;
+        border: 1.5px solid rgba(56,189,248,0.55) !important;
+        background: rgba(15, 23, 42, 0.94) !important;
+        transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+      }
+      #radar-widget #radar-header-bar {
+        width: 100% !important;
+        height: 100% !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        cursor: pointer !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: none !important;
+      }
+      #radar-widget #radar-header-title,
+      #radar-widget #btn-minimize-radar {
+        display: none !important;
+      }
+      #radar-widget #radar-mini-icon {
+        display: flex !important;
+      }
+      #radar-widget #radar-body {
+        display: none !important;
+      }
+
+      /* Ketika Radar dibuka/diklik pada mobile */
+      #radar-widget.mobile-expanded {
+        width: 154px !important;
+        height: auto !important;
+        border-radius: 1.25rem !important;
+        padding: 10px !important;
+      }
+      #radar-widget.mobile-expanded #radar-header-bar {
+        height: auto !important;
+        margin-bottom: 6px !important;
+        justify-content: space-between !important;
+      }
+      #radar-widget.mobile-expanded #radar-header-title,
+      #radar-widget.mobile-expanded #btn-minimize-radar {
+        display: flex !important;
+      }
+      #radar-widget.mobile-expanded #radar-mini-icon {
+        display: none !important;
+      }
+      #radar-widget.mobile-expanded #radar-body {
+        display: flex !important;
+      }
+
+      /* Toolbar navigasi bawah di tengah yang ergonomis (Thumb Reach Zone) */
+      .bottom-toolbar-container {
+        bottom: calc(84px + var(--safe-bottom)) !important;
+        transform: translateX(-50%) scale(0.92) !important;
+      }
+
+      /* Carousel bawah dengan Safe Area */
+      #carousel-wrapper {
+        bottom: calc(6px + var(--safe-bottom)) !important;
+        left: calc(6px + var(--safe-left)) !important;
+        right: calc(6px + var(--safe-right)) !important;
+      }
+    }
+  </style>
+</head>
+<body class="font-sans antialiased text-white select-none">
+
+  <!-- LATAR BELAKANG BLUR SEBELUM TEKSTUR 360 READY -->
+  <div id="panorama-backdrop"></div>
+
+  <!-- INITIAL FAST LOADING SCREEN DENGAN INDIKATOR PERSENTASE REAL-TIME -->
+  <div id="initial-loading-screen" class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-950/95 backdrop-blur-md transition-opacity duration-500">
+    <div class="absolute w-96 h-96 rounded-full bg-sky-500/15 filter blur-3xl pointer-events-none animate-pulse"></div>
+
+    <div class="relative z-10 flex flex-col items-center max-w-sm px-6 text-center">
+      <!-- Radar Pulse Icon -->
+      <div class="relative w-20 h-20 mb-6 flex items-center justify-center">
+        <div class="absolute inset-0 rounded-full bg-sky-500/30 animate-ping" style="animation-duration: 2.5s;"></div>
+        <div class="relative w-16 h-16 rounded-2xl bg-gradient-to-tr from-sky-600 to-indigo-600 flex items-center justify-center shadow-2xl shadow-sky-950/90 border border-sky-400/40">
+          <i data-lucide="compass" class="w-8 h-8 text-white animate-spin" style="animation-duration: 8s;"></i>
+        </div>
+      </div>
+
+      <!-- Judul & Status Loading -->
+      <h2 id="loader-title" class="text-base sm:text-lg font-bold text-white mb-1.5 drop-shadow-md">
+        Menyiapkan Tur Virtual 360°...
+      </h2>
+      <p id="loader-status" class="text-xs text-sky-300 font-mono mb-4 flex items-center justify-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span id="loader-status-text">Menghubungkan ke server panorama...</span>
+      </p>
+
+      <!-- Progress Bar Halus -->
+      <div class="w-full bg-slate-900 border border-white/10 rounded-full h-3 overflow-hidden shadow-inner p-0.5">
+        <div id="loader-progress-bar" class="h-full bg-gradient-to-r from-sky-500 via-indigo-500 to-emerald-400 rounded-full transition-all duration-200 shadow-sm" style="width: 15%;"></div>
+      </div>
+
+      <div class="flex items-center justify-between w-full mt-2.5 text-[11px] text-slate-400 font-mono">
+        <span id="loader-subtext">Resolusi HD 360°</span>
+        <span id="loader-percentage" class="text-sky-300 font-bold">15%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Kontainer WebGL Pannellum 360 -->
+  <div id="panorama-container"></div>
+
+  <!-- Overlay Transisi Scene Halus -->
+  <div id="scene-transition-overlay" class="flex flex-col items-center justify-center">
+    <div class="flex items-center gap-3 bg-slate-900/90 border border-white/20 px-6 py-3.5 rounded-full shadow-2xl backdrop-blur-md">
+      <div class="w-5 h-5 border-2 border-sky-400 border-t-transparent rounded-full animate-spin"></div>
+      <span id="transition-text" class="text-sm font-semibold tracking-wide text-slate-100">Memuat Scene Panorama...</span>
+    </div>
+  </div>
+
+  <!-- 1. HEADER ATAS (Informasi Destinasi & Tombol Aksi - Mobile Safe) -->
+  <header class="absolute top-4 left-4 right-4 z-30 flex items-center justify-between pointer-events-none gap-2">
+    <!-- Kartu Informasi Destinasi & Pengalih Cepat -->
+    <div class="header-info-box pointer-events-auto flex items-center gap-2 bg-slate-900/85 backdrop-blur-md border border-white/15 px-3 py-1.5 sm:py-2 rounded-2xl shadow-2xl transition-all hover:bg-slate-900/95 max-w-sm">
+      <div class="p-1.5 sm:p-2 bg-sky-500/20 text-sky-400 rounded-xl border border-sky-500/30 flex-shrink-0">
+        <i data-lucide="compass" class="w-4 h-4 sm:w-5 sm:h-5 animate-pulse"></i>
+      </div>
+      <div class="min-w-0 pr-1">
+        <div class="flex items-center gap-1.5">
+          <h1 id="tour-destination-title" class="header-title-text font-bold text-xs sm:text-sm text-white leading-tight drop-shadow-md truncate max-w-[130px] sm:max-w-[200px]">
+            Memuat Destinasi...
+          </h1>
+          <button id="btn-info-modal" title="Lihat Deskripsi Lengkap Destinasi" class="text-slate-400 hover:text-sky-300 transition-colors p-0.5">
+            <i data-lucide="info" class="w-3.5 h-3.5"></i>
+          </button>
+          
+          <button id="btn-quick-switch-dest" class="flex items-center gap-1 px-1.5 sm:px-2 py-0.5 bg-gradient-to-r from-sky-500/20 to-indigo-500/20 hover:from-sky-500/35 hover:to-indigo-500/35 border border-sky-400/40 text-sky-200 text-[10px] sm:text-[11px] font-semibold rounded-lg shadow-sm transition-all" title="Klik untuk berganti ke destinasi wisata lainnya">
+            <i data-lucide="map" class="w-3 h-3 text-sky-400"></i>
+            <span id="dest-badge-header">Ganti ▾</span>
+          </button>
+        </div>
+        <div class="flex items-center gap-1.5 mt-0.5">
+          <span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping flex-shrink-0"></span>
+          <span id="current-scene-title" class="text-[10px] sm:text-[11px] font-medium text-sky-300 truncate">
+            Menghubungkan ke Panorama 360°...
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tombol Aksi Kanan Atas -->
+    <div class="pointer-events-auto flex items-center gap-1 sm:gap-1.5 bg-slate-900/85 backdrop-blur-md border border-white/15 p-1 rounded-2xl shadow-2xl">
+      <!-- Tombol Sensor Gyroscope / Motion VR (Sensasi Realistis di HP!) -->
+      <button id="btn-gyro-toggle" class="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl text-xs font-semibold text-sky-300 hover:bg-white/10 transition-colors flex items-center gap-1" title="Aktifkan Sensor Gerak HP (Gyroscope)">
+        <i data-lucide="smartphone" id="gyro-icon" class="w-3.5 h-3.5 sm:w-4 sm:h-4"></i>
+        <span class="hidden md:inline" id="gyro-label">Gyro</span>
+      </button>
+
+      <!-- Tombol Buka Katalog Destinasi -->
+      <button id="btn-open-destinations" class="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-sky-950 transition-all" title="Buka Daftar Semua Destinasi Wisata">
+        <i data-lucide="map" class="w-3.5 h-3.5"></i>
+        <span class="hidden sm:inline">Pilih Destinasi</span>
+        <span id="dest-count-badge" class="bg-white/20 text-white text-[9px] sm:text-[10px] font-mono px-1.5 py-0.2 rounded-full">...</span>
+      </button>
+
+      <!-- Tombol Audio Ambience -->
+      <button id="btn-audio-toggle" class="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl text-xs font-medium text-slate-200 hover:bg-white/10 transition-colors flex items-center gap-1" title="Suara Alam / Ambience Latar">
+        <i data-lucide="volume-x" id="audio-icon" class="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400"></i>
+        <span class="hidden md:inline" id="audio-label">Ambience</span>
+      </button>
+
+      <!-- Tombol Bagikan Tautan -->
+      <button id="btn-share" class="p-1.5 sm:p-2 rounded-xl text-slate-200 hover:bg-white/10 transition-colors" title="Salin Tautan Tur 360°">
+        <i data-lucide="share-2" class="w-3.5 h-3.5 sm:w-4 sm:h-4"></i>
+      </button>
+
+      <!-- Tombol Panel Admin -->
+      <a id="btn-admin-link" href="/admin" class="flex items-center gap-1 px-2 sm:px-2.5 py-1.5 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/40 rounded-xl text-xs font-semibold transition-all" title="Buka Panel Kelola Tur">
+        <i data-lucide="settings" class="w-3.5 h-3.5 sm:w-4 sm:h-4"></i>
+        <span class="hidden sm:inline">Admin</span>
+      </a>
+    </div>
+  </header>
+
+  <!-- 2. RADAR ARAH PANDANG (RESPONSIF MOBILE-FAB DENGAN ROTASI REAL-TIME) -->
+  <div id="radar-widget" class="absolute top-20 left-4 z-30 pointer-events-auto bg-slate-900/90 backdrop-blur-md border border-white/15 p-3 rounded-2xl shadow-2xl transition-all duration-300 max-w-[200px]">
+    <!-- Bar Header Radar -->
+    <div id="radar-header-bar" class="flex items-center justify-between mb-2 pb-1 border-b border-white/10">
+      <div id="radar-header-title" class="flex items-center gap-1.5 text-xs font-bold text-sky-400">
+        <i data-lucide="compass" class="w-3.5 h-3.5"></i>
+        <span>Radar Arah</span>
+      </div>
+      <!-- Mini Compass Disc saat mode FAB Mobile -->
+      <div id="radar-mini-icon" class="hidden relative w-9 h-9 rounded-full bg-slate-950 border border-sky-400/50 items-center justify-center overflow-hidden">
+        <div id="radar-mini-needle" class="absolute w-0.5 h-6 bg-gradient-to-t from-transparent via-sky-400 to-rose-500 origin-center"></div>
+        <div class="w-1.5 h-1.5 rounded-full bg-white z-10 shadow"></div>
+      </div>
+      <button id="btn-minimize-radar" class="text-slate-400 hover:text-white text-[11px]" title="Minimalkan Radar">
+        <i data-lucide="chevron-up" id="radar-toggle-icon" class="w-3.5 h-3.5"></i>
+      </button>
+    </div>
+
+    <!-- Canvas Radar Lingkaran Penuh -->
+    <div id="radar-body" class="relative flex flex-col items-center">
+      <div class="relative w-28 h-28 sm:w-32 sm:h-32 rounded-full bg-slate-950 border-2 border-sky-500/30 flex items-center justify-center overflow-hidden shadow-inner">
+        <div class="absolute inset-2 sm:inset-3 rounded-full border border-sky-500/20 pointer-events-none"></div>
+        <div class="absolute inset-5 sm:inset-7 rounded-full border border-sky-500/15 pointer-events-none"></div>
+        <div class="absolute w-full h-px bg-sky-500/15 pointer-events-none"></div>
+        <div class="absolute h-full w-px bg-sky-500/15 pointer-events-none"></div>
+
+        <span class="absolute top-1 text-[9px] font-bold text-slate-300">U</span>
+        <span class="absolute bottom-1 text-[9px] font-bold text-slate-500">S</span>
+        <span class="absolute right-1 text-[9px] font-bold text-slate-500">T</span>
+        <span class="absolute left-1 text-[9px] font-bold text-slate-500">B</span>
+
+        <div id="radar-fov-cone" class="absolute inset-0 flex items-center justify-center pointer-events-none origin-center transition-transform duration-75">
+          <div class="w-0 h-0 border-l-[20px] sm:border-l-[24px] border-l-transparent border-r-[20px] sm:border-r-[24px] border-r-transparent border-t-[40px] sm:border-t-[48px] border-t-sky-400/35 filter blur-[0.5px] -translate-y-3 sm:-translate-y-4"></div>
+        </div>
+
+        <div class="w-2.5 h-2.5 rounded-full bg-sky-400 border border-white shadow-[0_0_8px_rgba(56,189,248,0.8)] z-10"></div>
+      </div>
+      <span class="text-[9px] text-slate-400 mt-1 text-center font-mono">Berputar real-time</span>
+    </div>
+  </div>
+
+  <!-- 3. INDIKATOR KOORDINAT & TELEMETRI WEBGL -->
+  <div id="coord-hud" class="absolute top-20 right-4 z-20 pointer-events-none hidden bg-slate-950/85 backdrop-blur-md border border-white/15 px-3 py-2 rounded-xl text-[10px] font-mono text-slate-300 shadow-xl space-y-1">
+    <div class="flex items-center justify-between gap-4 border-b border-white/10 pb-1">
+      <span class="text-slate-400">FPS:</span>
+      <span id="hud-fps" class="text-emerald-400 font-bold">60 FPS</span>
+    </div>
+    <div class="flex items-center justify-between gap-4">
+      <span class="text-slate-400">Pitch:</span>
+      <span id="hud-pitch" class="text-sky-400 font-bold">0.0°</span>
+    </div>
+    <div class="flex items-center justify-between gap-4">
+      <span class="text-slate-400">Yaw:</span>
+      <span id="hud-yaw" class="text-amber-400 font-bold">0.0°</span>
+    </div>
+    <div class="flex items-center justify-between gap-4">
+      <span class="text-slate-400">HFOV:</span>
+      <span id="hud-hfov" class="text-purple-400 font-bold">100°</span>
+    </div>
+  </div>
+
+  <!-- 4. BILAH KONTROL BAWAH (TOOLBAR NAVIGASI & ZOOM) -->
+  <div class="bottom-toolbar-container absolute bottom-28 md:bottom-32 left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
+    <div class="flex items-center gap-1 bg-slate-900/90 backdrop-blur-lg border border-white/20 p-1.5 rounded-2xl shadow-2xl">
+      <button id="btn-autorotate" class="p-2 sm:p-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/10 transition-colors" title="Mulai / Jeda Putar Otomatis">
+        <i data-lucide="play" id="icon-autorotate" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+      </button>
+
+      <button id="btn-zoom-in" class="p-2 sm:p-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/10 transition-colors" title="Perbesar (Zoom In)">
+        <i data-lucide="zoom-in" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+      </button>
+
+      <button id="btn-zoom-out" class="p-2 sm:p-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/10 transition-colors" title="Perkecil (Zoom Out)">
+        <i data-lucide="zoom-out" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+      </button>
+
+      <button id="btn-reset-view" class="p-2 sm:p-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/10 transition-colors" title="Reset Sudut Pandang Awal">
+        <i data-lucide="rotate-ccw" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+      </button>
+
+      <div class="w-px h-5 sm:h-6 bg-white/20 mx-0.5"></div>
+
+      <button id="btn-toggle-hud" class="p-2 sm:p-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/10 transition-colors" title="Tampilkan Koordinat Pitch/Yaw">
+        <i data-lucide="crosshair" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+      </button>
+
+      <button id="btn-toggle-hotspots" class="p-2 sm:p-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/10 transition-colors" title="Sembunyikan / Tampilkan Titik Hotspot">
+        <i data-lucide="map-pin" class="w-4 h-4 sm:w-5 sm:h-5 text-sky-400"></i>
+      </button>
+
+      <button id="btn-fullscreen" class="p-2 sm:p-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/10 transition-colors" title="Layar Penuh">
+        <i data-lucide="maximize" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+      </button>
+    </div>
+  </div>
+
+  <!-- 5. SLIDER THUMBNAIL SCENE BAWAH (BOTTOM DRAWER CAROUSEL DENGAN DRAG HANDLE) -->
+  <div id="carousel-wrapper" class="absolute bottom-3 left-3 right-3 z-30 pointer-events-auto transition-transform duration-300">
+    <div class="bg-slate-900/95 backdrop-blur-xl border border-white/15 p-2 sm:p-3 rounded-2xl shadow-2xl max-w-4xl mx-auto">
+      <div class="flex items-center justify-between mb-1.5 px-1 cursor-pointer" id="carousel-header-bar">
+        <div class="flex items-center gap-1.5">
+          <i data-lucide="layers" class="w-3.5 h-3.5 text-sky-400"></i>
+          <span class="text-[11px] font-bold uppercase tracking-wider text-slate-200">Titik Lokasi 360°</span>
+          <span id="scene-count-badge" class="text-[10px] bg-sky-500/20 text-sky-300 px-2 py-0.2 rounded-full font-mono">0 Scene</span>
+        </div>
+        <button id="btn-toggle-carousel" class="text-xs font-medium text-slate-400 hover:text-white flex items-center gap-1">
+          <span id="carousel-toggle-label">Sembunyikan</span>
+          <i data-lucide="chevron-down" id="carousel-toggle-icon" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>
+
+      <!-- Kontainer Kartu Thumbnail -->
+      <div id="thumbnails-container" class="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
+        <!-- Render dinamis kartu scene oleh JavaScript -->
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. MODAL INFORMASI DESTINASI -->
+  <div id="modal-info" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm hidden opacity-0 transition-opacity duration-200">
+    <div class="bg-slate-900 border border-white/20 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative text-left">
+      <button id="btn-close-modal" class="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <div class="flex items-center gap-3 mb-4">
+        <div class="p-3 bg-sky-500/20 text-sky-400 rounded-xl border border-sky-500/30">
+          <i data-lucide="map" class="w-6 h-6"></i>
+        </div>
+        <div>
+          <h2 id="modal-title" class="text-base sm:text-lg font-bold text-white">Informasi Destinasi</h2>
+          <span class="text-xs text-sky-400 font-medium">Tur Virtual 360 Derajat</span>
+        </div>
+      </div>
+
+      <div id="modal-thumbnail-wrapper" class="w-full h-44 rounded-xl overflow-hidden mb-4 border border-white/10 bg-slate-950">
+        <img id="modal-thumbnail" src="" alt="Thumbnail Destinasi" class="w-full h-full object-cover" />
+      </div>
+
+      <p id="modal-desc" class="text-xs sm:text-sm text-slate-300 leading-relaxed max-h-48 overflow-y-auto pr-1">
+        Deskripsi destinasi akan ditampilkan di sini.
+      </p>
+
+      <div class="mt-6 flex justify-end">
+        <button id="btn-modal-ok" class="px-5 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-lg transition-colors">
+          Tutup
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 7. MODAL DETAIL HOTSPOT INFORMASI -->
+  <div id="modal-hotspot-info" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm hidden opacity-0 transition-opacity duration-200">
+    <div class="bg-slate-900 border border-amber-500/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative text-left">
+      <button id="btn-close-hotspot-modal" class="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <div class="flex items-center gap-3 mb-3">
+        <div class="p-2.5 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/40">
+          <i data-lucide="info" class="w-6 h-6"></i>
+        </div>
+        <h3 class="text-base font-bold text-white">Keterangan Titik Lokasi</h3>
+      </div>
+
+      <p id="hotspot-info-text" class="text-xs sm:text-sm text-slate-200 leading-relaxed bg-slate-950/60 p-4 rounded-xl border border-white/10">
+        -
+      </p>
+
+      <div class="mt-5 flex justify-end">
+        <button id="btn-close-hotspot-ok" class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold rounded-xl shadow-md transition-colors">
+          Mengerti
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 8. MODAL KATALOG & PILIHAN SEMUA DESTINASI WISATA (MULTIPLE DESTINATIONS) -->
+  <div id="modal-destinations" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md hidden opacity-0 transition-opacity duration-300">
+    <div class="bg-slate-900 border border-white/20 rounded-3xl max-w-3xl w-full p-5 sm:p-7 shadow-2xl relative text-left max-h-[90vh] flex flex-col">
+      <button id="btn-close-dest-modal" class="absolute top-5 right-5 text-slate-400 hover:text-white p-2 rounded-xl hover:bg-white/10 transition-colors">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <div class="flex items-center gap-3 mb-4 flex-shrink-0">
+        <div class="p-3 bg-gradient-to-tr from-sky-600 to-indigo-600 text-white rounded-2xl shadow-lg shadow-sky-900/50">
+          <i data-lucide="map" class="w-6 h-6"></i>
+        </div>
+        <div>
+          <h2 class="text-lg sm:text-xl font-bold text-white">Katalog Destinasi Wisata 360°</h2>
+          <p class="text-xs text-slate-400 mt-0.5">Pilih objek wisata yang ingin Anda kunjungi dan jelajahi</p>
+        </div>
+      </div>
+
+      <!-- Grid Daftar Destinasi -->
+      <div id="destinations-grid" class="grid grid-cols-1 sm:grid-cols-2 gap-4 overflow-y-auto pr-1 flex-1 py-1">
+        <div class="py-12 col-span-2 text-center text-slate-400 text-xs flex flex-col items-center gap-2">
+          <div class="w-6 h-6 border-2 border-sky-400 border-t-transparent rounded-full animate-spin"></div>
+          <span>Memuat daftar seluruh destinasi...</span>
+        </div>
+      </div>
+
+      <div class="mt-4 pt-3 border-t border-white/10 flex items-center justify-between text-xs text-slate-400 flex-shrink-0">
+        <span id="destinations-modal-summary">Tersedia destinasi wisata...</span>
+        <button id="btn-close-dest-modal-bottom" class="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold rounded-xl transition-colors">
+          Tutup
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFIKASI GLOBAL -->
+  <div id="toast" class="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-slate-800/95 border border-sky-400/40 text-slate-100 text-xs font-medium px-4 py-2.5 rounded-full shadow-2xl backdrop-blur-md opacity-0 pointer-events-none transition-all duration-300">
+    Pesan notifikasi
+  </div>
+
+  <!-- LOGIKA INTERAKTIF UTAMA (PANNELLUM + TUR 360 + GYROSCOPE + MOBILE-FIRST) -->
+  <script>
+    const pathParts = window.location.pathname.split('/').filter(Boolean);
+    const tourIndex = pathParts.indexOf('tour');
+    let tourSlug = (tourIndex !== -1 && pathParts[tourIndex + 1]) 
+      ? pathParts[tourIndex + 1] 
+      : ((pathParts[0] === 'tour' && pathParts[1]) ? pathParts[1] : '');
+
+    const adminLinkEl = document.getElementById('btn-admin-link');
+    if (adminLinkEl && window.APP_BASE) {
+      adminLinkEl.href = window.APP_BASE + '/admin';
+    }
+
+    function fixAssetUrl(url) {
+      if (!url) return '';
+      if (window.APP_BASE && url.startsWith('/') && !url.startsWith(window.APP_BASE)) {
+        return window.APP_BASE + url;
+      }
+      return url;
+    }
+
+    let viewer = null;
+    let tourConfig = null;
+    let currentSceneId = null;
+    let isAutoRotating = false;
+    let idleTimer = null;
+    let isAudioPlaying = false;
+    let audioContext = null;
+    let ambientGain = null;
+    let areHotspotsVisible = true;
+    let isCarouselMinimized = false;
+    let isGyroActive = false;
+    let allDestinations = [];
+
+    lucide.createIcons();
+
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.classList.remove('opacity-0', 'pointer-events-none');
+      toast.classList.add('opacity-100', '-translate-y-1');
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'pointer-events-none');
+        toast.classList.remove('opacity-100', '-translate-y-1');
+      }, 2500);
+    }
+
+    function updateInitialLoader(percent, statusText) {
+      const progressBar = document.getElementById('loader-progress-bar');
+      const percentageText = document.getElementById('loader-percentage');
+      const statusEl = document.getElementById('loader-status-text');
+      if (progressBar) progressBar.style.width = `${percent}%`;
+      if (percentageText) percentageText.textContent = `${percent}%`;
+      if (statusEl && statusText) statusEl.textContent = statusText;
+    }
+
+    function dismissInitialLoader() {
+      updateInitialLoader(100, 'Panorama Siap Ditampilkan!');
+      const splash = document.getElementById('initial-loading-screen');
+      if (splash) {
+        splash.classList.add('opacity-0', 'pointer-events-none');
+        setTimeout(() => {
+          splash.style.display = 'none';
+        }, 500);
+      }
+      const backdrop = document.getElementById('panorama-backdrop');
+      if (backdrop) backdrop.style.opacity = '0';
+    }
+
+    function preloadPanoramaImageStream(imageUrl, onProgress) {
+      return new Promise((resolve) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', imageUrl, true);
+        xhr.responseType = 'blob';
+
+        xhr.onprogress = (event) => {
+          if (event.lengthComputable && event.total > 0) {
+            const percent = Math.min(99, Math.round((event.loaded / event.total) * 100));
+            const mbLoaded = (event.loaded / (1024 * 1024)).toFixed(1);
+            const mbTotal = (event.total / (1024 * 1024)).toFixed(1);
+            onProgress(percent, `${mbLoaded} MB / ${mbTotal} MB (${percent}%)`);
+          } else {
+            const mbLoaded = (event.loaded / (1024 * 1024)).toFixed(1);
+            onProgress(65, `Mengunduh ${mbLoaded} MB...`);
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300 && xhr.response) {
+            const objectUrl = URL.createObjectURL(xhr.response);
+            resolve(objectUrl);
+          } else {
+            resolve(imageUrl);
+          }
+        };
+
+        xhr.onerror = () => resolve(imageUrl);
+        xhr.ontimeout = () => resolve(imageUrl);
+        xhr.timeout = 15000;
+        xhr.send();
+      });
+    }
+
+    function customHotspotRenderer(hotSpotDiv, args) {
+      hotSpotDiv.classList.add(args.cssClass);
+
+      const iconContainer = document.createElement('div');
+      iconContainer.className = 'hotspot-icon';
+      
+      if (args.type === 'scene') {
+        iconContainer.innerHTML = `
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        `;
+      } else {
+        iconContainer.innerHTML = `
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 sm:w-5 sm:h-5 font-bold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          </svg>
+        `;
+      }
+      hotSpotDiv.appendChild(iconContainer);
+
+      const tooltip = document.createElement('div');
+      tooltip.className = 'hotspot-tooltip-card';
+      tooltip.innerHTML = `
+        <div class="flex items-center gap-1.5">
+          <span>${args.text}</span>
+          ${args.type === 'scene' ? '<span class="text-sky-300 text-[10px]">➜</span>' : ''}
+        </div>
+      `;
+      hotSpotDiv.appendChild(tooltip);
+
+      hotSpotDiv.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (args.type === 'scene' && args.sceneId) {
+          switchSceneWithTransition(args.sceneId, args.text);
+        } else if (args.type === 'info') {
+          openHotspotModal(args.text);
+        }
+      });
+    }
+
+    function switchSceneWithTransition(targetSceneId, sceneTitle) {
+      if (targetSceneId === currentSceneId) return;
+
+      const overlay = document.getElementById('scene-transition-overlay');
+      const text = document.getElementById('transition-text');
+      text.textContent = sceneTitle ? `Menuju: ${sceneTitle}...` : 'Memuat Scene Panorama...';
+      overlay.classList.add('active');
+
+      setTimeout(() => {
+        if (viewer && targetSceneId) {
+          viewer.loadScene(targetSceneId);
+          currentSceneId = targetSceneId;
+          updateActiveSceneUI(targetSceneId);
+        }
+        setTimeout(() => {
+          overlay.classList.remove('active');
+        }, 350);
+      }, 300);
+    }
+
+    function updateActiveSceneUI(sceneId) {
+      if (!tourConfig || !tourConfig.scenes) return;
+      const sceneData = tourConfig.scenes[sceneId];
+      if (!sceneData) return;
+
+      document.getElementById('current-scene-title').textContent = sceneData.title || 'Panorama 360°';
+
+      document.querySelectorAll('.thumbnail-card').forEach((card) => {
+        if (card.dataset.sceneId === sceneId) {
+          card.classList.add('border-sky-400', 'ring-2', 'ring-sky-400/50', 'bg-sky-950/70');
+          card.classList.remove('border-white/10', 'bg-slate-900/60');
+          card.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+        } else {
+          card.classList.remove('border-sky-400', 'ring-2', 'ring-sky-400/50', 'bg-sky-950/70');
+          card.classList.add('border-white/10', 'bg-slate-900/60');
+        }
+      });
+    }
+
+    function openHotspotModal(description) {
+      document.getElementById('hotspot-info-text').textContent = description;
+      const modal = document.getElementById('modal-hotspot-info');
+      modal.classList.remove('hidden');
+      setTimeout(() => modal.classList.remove('opacity-0'), 10);
+    }
+
+    function closeHotspotModal() {
+      const modal = document.getElementById('modal-hotspot-info');
+      modal.classList.add('opacity-0');
+      setTimeout(() => modal.classList.add('hidden'), 200);
+    }
+
+    function openDestinationModal() {
+      if (!tourConfig || !tourConfig.destination) return;
+      document.getElementById('modal-title').textContent = tourConfig.destination.title;
+      document.getElementById('modal-desc').textContent = tourConfig.destination.description;
+      document.getElementById('modal-thumbnail').src = tourConfig.destination.thumbnail_url;
+      const modal = document.getElementById('modal-info');
+      modal.classList.remove('hidden');
+      setTimeout(() => modal.classList.remove('opacity-0'), 10);
+    }
+
+    function closeDestinationModal() {
+      const modal = document.getElementById('modal-info');
+      modal.classList.add('opacity-0');
+      setTimeout(() => modal.classList.add('hidden'), 200);
+    }
+
+    function resetIdleTimer() {
+      if (idleTimer) clearTimeout(idleTimer);
+      if (viewer && isAutoRotating) {
+        viewer.stopAutoRotate();
+      }
+      idleTimer = setTimeout(() => {
+        if (viewer && isAutoRotating) {
+          viewer.startAutoRotate(-2);
+        }
+      }, 4000);
+    }
+
+    function toggleAmbientSound() {
+      if (!isAudioPlaying) {
+        try {
+          if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const bufferSize = audioContext.sampleRate * 2;
+            const noiseBuffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+            const output = noiseBuffer.getChannelData(0);
+            let b0 = 0, b1 = 0, b2 = 0;
+            for (let i = 0; i < bufferSize; i++) {
+              const white = Math.random() * 2 - 1;
+              b0 = 0.99886 * b0 + white * 0.0555179;
+              b1 = 0.99332 * b1 + white * 0.0750759;
+              b2 = 0.96900 * b2 + white * 0.1538520;
+              output[i] = (b0 + b1 + b2) * 0.04;
+            }
+
+            const whiteNoise = audioContext.createBufferSource();
+            whiteNoise.buffer = noiseBuffer;
+            whiteNoise.loop = true;
+
+            const filter = audioContext.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.value = 350;
+
+            ambientGain = audioContext.createGain();
+            ambientGain.gain.setValueAtTime(0.12, audioContext.currentTime);
+
+            whiteNoise.connect(filter);
+            filter.connect(ambientGain);
+            ambientGain.connect(audioContext.destination);
+            whiteNoise.start(0);
+          } else {
+            ambientGain.gain.setValueAtTime(0.12, audioContext.currentTime);
+          }
+
+          isAudioPlaying = true;
+          document.getElementById('audio-icon').setAttribute('data-lucide', 'volume-2');
+          document.getElementById('audio-icon').classList.remove('text-slate-400');
+          document.getElementById('audio-icon').classList.add('text-sky-400');
+          document.getElementById('btn-audio-toggle').classList.add('bg-sky-500/20', 'border', 'border-sky-500/40');
+          showToast('Suara suasana angin diaktifkan');
+        } catch (e) {
+          console.error(e);
+        }
+      } else {
+        if (ambientGain && audioContext) {
+          ambientGain.gain.setValueAtTime(0.001, audioContext.currentTime);
+        }
+        isAudioPlaying = false;
+        document.getElementById('audio-icon').setAttribute('data-lucide', 'volume-x');
+        document.getElementById('audio-icon').classList.remove('text-sky-400');
+        document.getElementById('audio-icon').classList.add('text-slate-400');
+        document.getElementById('btn-audio-toggle').classList.remove('bg-sky-500/20', 'border', 'border-sky-500/40');
+        showToast('Suara suasana dinonaktifkan');
+      }
+      lucide.createIcons();
+    }
+
+    // ========================================================
+    // SENSOR GYROSCOPE HP (MENGGERAKKAN PANORAMA DENGAN GERAKAN FISIK HP)
+    // ========================================================
+    function handleDeviceOrientation(event) {
+      if (!viewer || !isGyroActive) return;
+      if (event.alpha !== null && event.beta !== null) {
+        const pitch = Math.max(-85, Math.min(85, event.beta - 90));
+        const yaw = (360 - event.alpha) % 360;
+        viewer.setPitch(pitch);
+        viewer.setYaw(yaw);
+      }
+    }
+
+    function toggleGyroscope() {
+      if (!window.DeviceOrientationEvent) {
+        showToast('Sensor Gyroscope tidak didukung di perangkat ini.');
+        return;
+      }
+
+      if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission()
+          .then((permissionState) => {
+            if (permissionState === 'granted') {
+              startGyroscope();
+            } else {
+              showToast('Izin akses sensor gerak ditolak.');
+            }
+          })
+          .catch(() => showToast('Gagal mengakses sensor gerak.'));
+      } else {
+        if (!isGyroActive) {
+          startGyroscope();
+        } else {
+          stopGyroscope();
+        }
+      }
+    }
+
+    function startGyroscope() {
+      isGyroActive = true;
+      window.addEventListener('deviceorientation', handleDeviceOrientation, { passive: true });
+      document.getElementById('btn-gyro-toggle').classList.add('bg-sky-500/30', 'text-white', 'border-sky-400');
+      showToast('Sensor Gyroscope HP Aktif! Gerakkan HP Anda.');
+      if (viewer && isAutoRotating) {
+        viewer.stopAutoRotate();
+        isAutoRotating = false;
+        document.getElementById('icon-autorotate').setAttribute('data-lucide', 'play');
+        lucide.createIcons();
+      }
+    }
+
+    function stopGyroscope() {
+      isGyroActive = false;
+      window.removeEventListener('deviceorientation', handleDeviceOrientation);
+      document.getElementById('btn-gyro-toggle').classList.remove('bg-sky-500/30', 'text-white', 'border-sky-400');
+      showToast('Sensor Gyroscope dinonaktifkan.');
+    }
+
+    // ========================================================
+    // MEMUAT DATA KONFIGURASI TUR
+    // ========================================================
+    async function loadTourData() {
+      try {
+        updateInitialLoader(20, 'Membaca data destinasi...');
+        
+        const endpoint = tourSlug ? `/api/tour/${tourSlug}` : '/api/tour/latest';
+        const response = await fetch(endpoint);
+        const data = await response.json();
+
+        if (!data.success) {
+          dismissInitialLoader();
+          showToast('Gagal memuat tur: ' + data.message);
+          return;
+        }
+
+        tourConfig = data;
+        tourSlug = tourConfig.destination.slug;
+
+        if (window.history && window.history.replaceState) {
+          const targetPath = (window.APP_BASE || '') + '/tour/' + tourSlug;
+          if (window.location.pathname !== targetPath) {
+            window.history.replaceState({}, '', targetPath);
+          }
+        }
+
+        if (tourConfig.destination && tourConfig.destination.thumbnail_url) {
+          tourConfig.destination.thumbnail_url = fixAssetUrl(tourConfig.destination.thumbnail_url);
+        }
+        if (tourConfig.scenes) {
+          for (const sKey in tourConfig.scenes) {
+            const sc = tourConfig.scenes[sKey];
+            if (sc.panorama) sc.panorama = fixAssetUrl(sc.panorama);
+          }
+        }
+        if (tourConfig.scenesList) {
+          tourConfig.scenesList.forEach(s => {
+            if (s.image_url) s.image_url = fixAssetUrl(s.image_url);
+          });
+        }
+
+        const backdropEl = document.getElementById('panorama-backdrop');
+        if (backdropEl && tourConfig.destination.thumbnail_url) {
+          backdropEl.style.backgroundImage = `url('${tourConfig.destination.thumbnail_url}')`;
+        }
+
+        document.title = `${tourConfig.destination.title} - Tur Virtual 360°`;
+        document.getElementById('tour-destination-title').textContent = tourConfig.destination.title;
+        document.getElementById('scene-count-badge').textContent = `${tourConfig.scenesList.length} Titik`;
+
+        renderThumbnails(tourConfig.scenesList);
+
+        for (const sceneKey in tourConfig.scenes) {
+          const s = tourConfig.scenes[sceneKey];
+          if (s.hotSpots) {
+            s.hotSpots.forEach((hs) => {
+              hs.createTooltipFunc = customHotspotRenderer;
+              hs.createTooltipArgs = {
+                type: hs.type,
+                text: hs.text,
+                sceneId: hs.sceneId,
+                cssClass: hs.cssClass,
+              };
+            });
+          }
+        }
+
+        currentSceneId = tourConfig.default.firstScene;
+        const initialSceneData = tourConfig.scenes[currentSceneId];
+        const rawPanoramaUrl = initialSceneData ? initialSceneData.panorama : null;
+
+        updateInitialLoader(40, 'Mengunduh panorama HD 360°...');
+
+        if (rawPanoramaUrl) {
+          const blobUrl = await preloadPanoramaImageStream(rawPanoramaUrl, (percent, progressText) => {
+            updateInitialLoader(Math.max(40, Math.min(95, percent)), `Mengunduh panorama HD... ${progressText}`);
+          });
+          initialSceneData.panorama = blobUrl;
+        }
+
+        updateInitialLoader(96, 'Merender tekstur 360° WebGL...');
+
+        const container = document.getElementById('panorama-container');
+        container.innerHTML = '';
+        viewer = pannellum.viewer('panorama-container', tourConfig);
+
+        viewer.on('load', () => {
+          dismissInitialLoader();
+          updateActiveSceneUI(viewer.getScene());
+          updateHUD();
+
+          setTimeout(() => {
+            preloadOtherScenes(tourConfig.scenesList, viewer.getScene());
+          }, 1200);
+        });
+
+        viewer.on('error', () => {
+          dismissInitialLoader();
+        });
+
+        setTimeout(() => {
+          const splash = document.getElementById('initial-loading-screen');
+          if (splash && splash.style.display !== 'none') {
+            dismissInitialLoader();
+          }
+        }, 8000);
+
+        viewer.on('scenechange', (sceneId) => {
+          currentSceneId = sceneId;
+          updateActiveSceneUI(sceneId);
+          updateHUD();
+        });
+
+        ['mousedown', 'touchstart', 'mousemove'].forEach((evt) => {
+          container.addEventListener(evt, resetIdleTimer, { passive: true });
+        });
+
+        setInterval(updateHUD, 150);
+
+        isAutoRotating = true;
+        document.getElementById('icon-autorotate').setAttribute('data-lucide', 'pause');
+        lucide.createIcons();
+
+      } catch (err) {
+        console.error('Kesalahan saat memuat konfigurasi tur:', err);
+        dismissInitialLoader();
+        showToast('Terjadi kendala saat memuat tur virtual.');
+      }
+    }
+
+    function preloadOtherScenes(scenes, activeSceneId) {
+      if (!scenes || !Array.isArray(scenes)) return;
+      scenes.forEach((scene) => {
+        if (scene.id !== activeSceneId && scene.image_url) {
+          const img = new Image();
+          img.src = scene.image_url;
+        }
+      });
+    }
+
+    function renderThumbnails(scenes) {
+      const container = document.getElementById('thumbnails-container');
+      container.innerHTML = '';
+
+      scenes.forEach((scene) => {
+        const card = document.createElement('button');
+        card.className = `thumbnail-card flex-shrink-0 flex items-center gap-2 px-2.5 py-1.5 rounded-xl border border-white/10 bg-slate-900/60 hover:bg-slate-800/80 transition-all text-left group`;
+        card.dataset.sceneId = scene.id;
+
+        card.innerHTML = `
+          <div class="w-11 h-8 rounded-lg overflow-hidden border border-white/20 flex-shrink-0 relative bg-slate-950">
+            <img src="${scene.image_url}" alt="${scene.title}" loading="lazy" decoding="async" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" onerror="this.src='${fixAssetUrl('/uploads/alun_alun_taman.jpg')}'"/>
+          </div>
+          <div class="pr-1">
+            <p class="text-[11px] font-semibold text-white truncate max-w-[110px] sm:max-w-[150px]">${scene.title}</p>
+            <span class="text-[9px] text-sky-400 flex items-center gap-1">
+              <span>Klik untuk lihat</span>
+            </span>
+          </div>
+        `;
+
+        card.addEventListener('click', () => {
+          switchSceneWithTransition(scene.id, scene.title);
+        });
+
+        container.appendChild(card);
+      });
+    }
+
+    let lastTime = performance.now();
+    let frameCount = 0;
+    let currentFps = 60;
+    function measureFps(now) {
+      frameCount++;
+      if (now - lastTime >= 800) {
+        currentFps = Math.round((frameCount * 1000) / (now - lastTime));
+        frameCount = 0;
+        lastTime = now;
+        const fpsEl = document.getElementById('hud-fps');
+        if (fpsEl) fpsEl.textContent = `${currentFps} FPS`;
+      }
+      requestAnimationFrame(measureFps);
+    }
+    requestAnimationFrame(measureFps);
+
+    function updateHUD() {
+      if (!viewer) return;
+      try {
+        const pitch = viewer.getPitch().toFixed(1);
+        const yaw = viewer.getYaw().toFixed(1);
+        const hfov = viewer.getHfov().toFixed(0);
+
+        const pitchEl = document.getElementById('hud-pitch');
+        if (pitchEl) pitchEl.textContent = `${pitch}°`;
+        const yawEl = document.getElementById('hud-yaw');
+        if (yawEl) yawEl.textContent = `${yaw}°`;
+        const hfovEl = document.getElementById('hud-hfov');
+        if (hfovEl) hfovEl.textContent = `${hfov}°`;
+
+        const radarCone = document.getElementById('radar-fov-cone');
+        if (radarCone) {
+          radarCone.style.transform = `rotate(${yaw}deg)`;
+        }
+
+        const miniNeedle = document.getElementById('radar-mini-needle');
+        if (miniNeedle) {
+          miniNeedle.style.transform = `rotate(${yaw}deg)`;
+        }
+      } catch (e) {}
+    }
+
+    document.getElementById('btn-autorotate').addEventListener('click', () => {
+      if (!viewer) return;
+      if (isAutoRotating) {
+        viewer.stopAutoRotate();
+        isAutoRotating = false;
+        document.getElementById('icon-autorotate').setAttribute('data-lucide', 'play');
+        showToast('Putar otomatis dijeda');
+      } else {
+        viewer.startAutoRotate(-2);
+        isAutoRotating = true;
+        document.getElementById('icon-autorotate').setAttribute('data-lucide', 'pause');
+        showToast('Putar otomatis dimulai');
+      }
+      lucide.createIcons();
+    });
+
+    document.getElementById('btn-zoom-in').addEventListener('click', () => {
+      if (!viewer) return;
+      viewer.setHfov(viewer.getHfov() - 12);
+    });
+
+    document.getElementById('btn-zoom-out').addEventListener('click', () => {
+      if (!viewer) return;
+      viewer.setHfov(viewer.getHfov() + 12);
+    });
+
+    document.getElementById('btn-reset-view').addEventListener('click', () => {
+      if (!viewer || !currentSceneId) return;
+      const currentConfig = tourConfig.scenes[currentSceneId];
+      if (currentConfig) {
+        viewer.setPitch(currentConfig.pitch || 0);
+        viewer.setYaw(currentConfig.yaw || 0);
+        viewer.setHfov(currentConfig.hfov || 100);
+        showToast('Sudut pandang direset ke posisi awal');
+      }
+    });
+
+    document.getElementById('btn-toggle-hud').addEventListener('click', () => {
+      const hud = document.getElementById('coord-hud');
+      hud.classList.toggle('hidden');
+      showToast(hud.classList.contains('hidden') ? 'HUD Koordinat disembunyikan' : 'HUD Koordinat ditampilkan');
+    });
+
+    document.getElementById('btn-toggle-hotspots').addEventListener('click', () => {
+      areHotspotsVisible = !areHotspotsVisible;
+      const spots = document.querySelectorAll('.custom-hotspot-nav, .custom-hotspot-info');
+      spots.forEach((el) => {
+        el.style.display = areHotspotsVisible ? 'flex' : 'none';
+      });
+      showToast(areHotspotsVisible ? 'Titik navigasi ditampilkan' : 'Titik navigasi disembunyikan');
+    });
+
+    document.getElementById('btn-fullscreen').addEventListener('click', () => {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    });
+
+    function toggleCarouselDrawer() {
+      const carousel = document.getElementById('thumbnails-container');
+      const label = document.getElementById('carousel-toggle-label');
+      const icon = document.getElementById('carousel-toggle-icon');
+      isCarouselMinimized = !isCarouselMinimized;
+
+      if (isCarouselMinimized) {
+        carousel.classList.add('hidden');
+        label.textContent = 'Tampilkan';
+        icon.setAttribute('data-lucide', 'chevron-up');
+      } else {
+        carousel.classList.remove('hidden');
+        label.textContent = 'Sembunyikan';
+        icon.setAttribute('data-lucide', 'chevron-down');
+      }
+      lucide.createIcons();
+    }
+
+    document.getElementById('btn-toggle-carousel').addEventListener('click', toggleCarouselDrawer);
+    document.getElementById('carousel-header-bar').addEventListener('click', (e) => {
+      if (e.target.closest('#btn-toggle-carousel')) return;
+      toggleCarouselDrawer();
+    });
+
+    const radarWidget = document.getElementById('radar-widget');
+    const btnMinRadar = document.getElementById('btn-minimize-radar');
+    const radarHeaderBar = document.getElementById('radar-header-bar');
+
+    if (radarHeaderBar) {
+      radarHeaderBar.addEventListener('click', (e) => {
+        if (window.innerWidth <= 640) {
+          radarWidget.classList.toggle('mobile-expanded');
+          lucide.createIcons();
+        }
+      });
+    }
+
+    if (btnMinRadar) {
+      btnMinRadar.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (window.innerWidth <= 640) {
+          radarWidget.classList.remove('mobile-expanded');
+        } else {
+          const body = document.getElementById('radar-body');
+          const icon = document.getElementById('radar-toggle-icon');
+          if (body.classList.contains('hidden')) {
+            body.classList.remove('hidden');
+            icon.setAttribute('data-lucide', 'chevron-up');
+          } else {
+            body.classList.add('hidden');
+            icon.setAttribute('data-lucide', 'chevron-down');
+          }
+        }
+        lucide.createIcons();
+      });
+    }
+
+    // ========================================================
+    // MANAJEMEN SEMUA DESTINASI (MULTIPLE DESTINATIONS)
+    // ========================================================
+    function openDestinationsModal() {
+      const modal = document.getElementById('modal-destinations');
+      modal.classList.remove('hidden');
+      setTimeout(() => modal.classList.remove('opacity-0'), 10);
+      loadAllDestinations();
+      lucide.createIcons();
+    }
+
+    function closeDestinationsModal() {
+      const modal = document.getElementById('modal-destinations');
+      modal.classList.add('opacity-0');
+      setTimeout(() => modal.classList.add('hidden'), 200);
+    }
+
+    async function loadAllDestinations() {
+      try {
+        const res = await fetch('/api/destinations');
+        const data = await res.json();
+        if (data.success && Array.isArray(data.data)) {
+          allDestinations = data.data;
+          
+          const countBadge = document.getElementById('dest-count-badge');
+          if (countBadge) countBadge.textContent = allDestinations.length;
+
+          const badgeHeader = document.getElementById('dest-badge-header');
+          if (badgeHeader) badgeHeader.textContent = `${allDestinations.length} Lokasi ▾`;
+
+          renderDestinationsGrid();
+        }
+      } catch (e) {
+        console.error('Gagal mengambil daftar destinasi:', e);
+      }
+    }
+
+    function renderDestinationsGrid() {
+      const container = document.getElementById('destinations-grid');
+      if (!container) return;
+      container.innerHTML = '';
+
+      const summary = document.getElementById('destinations-modal-summary');
+      if (summary) summary.textContent = `Tersedia ${allDestinations.length} objek wisata virtual 360°`;
+
+      allDestinations.forEach((dest) => {
+        const isCurrent = (dest.slug === tourSlug);
+        const card = document.createElement('div');
+        card.className = `p-3.5 rounded-2xl border transition-all flex flex-col justify-between ${
+          isCurrent 
+            ? 'bg-sky-950/70 border-sky-500/70 ring-2 ring-sky-500/40 shadow-xl' 
+            : 'bg-slate-950/70 border-white/10 hover:border-sky-500/40 hover:bg-slate-900/90'
+        }`;
+
+        const sceneCount = dest.scenes ? dest.scenes.length : (dest._count?.scenes || 0);
+
+        card.innerHTML = `
+          <div class="h-32 sm:h-36 w-full rounded-xl overflow-hidden relative mb-2.5 bg-slate-900 border border-white/10 group">
+            <img src="${fixAssetUrl(dest.thumbnail_url)}" alt="${dest.title}" class="w-full h-full object-cover transition-transform duration-300 hover:scale-105" onerror="this.src='${fixAssetUrl('/uploads/alun_alun_taman.jpg')}'" />
+            <span class="absolute top-2 right-2 bg-slate-900/85 backdrop-blur-md px-2 py-0.5 rounded-full text-[10px] font-semibold text-sky-300 border border-white/10 shadow-md">
+              ${sceneCount} Panorama
+            </span>
+            ${isCurrent ? `
+              <span class="absolute bottom-2 left-2 bg-emerald-600/90 backdrop-blur-md px-2 py-0.5 rounded-full text-[10px] font-bold text-white shadow-md flex items-center gap-1">
+                <span class="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
+                Aktif
+              </span>
+            ` : ''}
+          </div>
+
+          <div class="flex-1 flex flex-col justify-between">
+            <div>
+              <h3 class="text-xs sm:text-sm font-bold text-white mb-1 leading-snug">${dest.title}</h3>
+              <p class="text-[11px] text-slate-300 line-clamp-2 leading-relaxed mb-3">${dest.description || ''}</p>
+            </div>
+
+            <div>
+              ${isCurrent ? `
+                <button class="w-full py-2 bg-slate-800 text-slate-400 text-xs font-semibold rounded-xl cursor-default" disabled>
+                  ✓ Sedang Ditampilkan
+                </button>
+              ` : `
+                <button class="btn-goto-dest w-full py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded-xl shadow-lg transition-all flex items-center justify-center gap-1.5">
+                  <span>Jelajahi Wisata Ini</span>
+                  <span>➜</span>
+                </button>
+              `}
+            </div>
+          </div>
+        `;
+
+        if (!isCurrent) {
+          const btn = card.querySelector('.btn-goto-dest');
+          if (btn) {
+            btn.addEventListener('click', () => {
+              switchDestination(dest.slug);
+            });
+          }
+        }
+
+        container.appendChild(card);
+      });
+      lucide.createIcons();
+    }
+
+    function switchDestination(targetSlug) {
+      closeDestinationsModal();
+      tourSlug = targetSlug;
+      
+      const splash = document.getElementById('initial-loading-screen');
+      if (splash) {
+        splash.style.display = 'flex';
+        splash.classList.remove('opacity-0', 'pointer-events-none');
+        updateInitialLoader(15, 'Menyiapkan destinasi terpilih...');
+      }
+
+      loadTourData();
+    }
+
+    document.getElementById('btn-open-destinations').addEventListener('click', openDestinationsModal);
+    document.getElementById('btn-quick-switch-dest').addEventListener('click', openDestinationsModal);
+    document.getElementById('btn-close-dest-modal').addEventListener('click', closeDestinationsModal);
+    document.getElementById('btn-close-dest-modal-bottom').addEventListener('click', closeDestinationsModal);
+
+    document.getElementById('btn-info-modal').addEventListener('click', openDestinationModal);
+    document.getElementById('btn-close-modal').addEventListener('click', closeDestinationModal);
+    document.getElementById('btn-modal-ok').addEventListener('click', closeDestinationModal);
+
+    document.getElementById('btn-close-hotspot-modal').addEventListener('click', closeHotspotModal);
+    document.getElementById('btn-close-hotspot-ok').addEventListener('click', closeHotspotModal);
+
+    document.getElementById('btn-audio-toggle').addEventListener('click', toggleAmbientSound);
+    document.getElementById('btn-gyro-toggle').addEventListener('click', toggleGyroscope);
+
+    document.getElementById('btn-share').addEventListener('click', () => {
+      navigator.clipboard.writeText(window.location.href);
+      showToast('Tautan tur 360° berhasil disalin ke papan klip!');
+    });
+
+    window.addEventListener('DOMContentLoaded', () => {
+      loadTourData();
+      loadAllDestinations();
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+{
+  "name": "Tur Virtual 360° Interaktif",
+  "description": "Aplikasi Web Tur Virtual 360° interaktif dengan Pannellum WebGL, panel admin dinamis, manajemen panorama equirectangular, dan transisi hotspot animasi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,59 @@
+// Prisma schema untuk Tur Virtual 360° Interaktif
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model AdminUser {
+  id            String   @id @default(uuid())
+  username      String   @unique
+  password_hash String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Destination {
+  id            String   @id @default(uuid())
+  slug          String   @unique
+  title         String
+  description   String
+  thumbnail_url String
+  scenes        Scene[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Scene {
+  id                String    @id @default(uuid())
+  destination_id    String
+  destination       Destination @relation(fields: [destination_id], references: [id], onDelete: Cascade)
+  title             String
+  image_url         String
+  pitch             Float     @default(0.0)
+  yaw               Float     @default(0.0)
+  hfov              Float     @default(100.0)
+  is_starting_scene Boolean   @default(false)
+  hotspots          Hotspot[] @relation("SceneHotspots")
+  targeted_by       Hotspot[] @relation("TargetScene")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+model Hotspot {
+  id              String   @id @default(uuid())
+  scene_id        String
+  scene           Scene    @relation("SceneHotspots", fields: [scene_id], references: [id], onDelete: Cascade)
+  target_scene_id String?
+  target_scene    Scene?   @relation("TargetScene", fields: [target_scene_id], references: [id], onDelete: SetNull)
+  pitch           Float
+  yaw             Float
+  type            String   // 'nav' | 'info'
+  tooltip_text    String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}

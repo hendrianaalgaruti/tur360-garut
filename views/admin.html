@@ -1,0 +1,2578 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Panel Admin - Kelola Tur Virtual 360°</title>
+
+  <!-- Google Fonts: Plus Jakarta Sans & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Plus Jakarta Sans', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            brand: {
+              50: '#f0f9ff',
+              500: '#0ea5e9',
+              600: '#0284c7',
+              700: '#0369a1',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- Alpine.js CDN -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
+
+  <!-- Deteksi Sub-Path Deployment cPanel (/tur360) & Auto-Prefix Fetch/Asset -->
+  <script>
+    (function() {
+      const isTur360 = window.location.pathname.startsWith('/tur360');
+      window.APP_BASE = isTur360 ? '/tur360' : '';
+
+      // Intercept window.fetch agar seluruh request API dan asset mengarah ke prefix sub-folder
+      const origFetch = window.fetch;
+      window.fetch = function(input, init) {
+        if (typeof input === 'string') {
+          if (input.startsWith('/api') || input.startsWith('/uploads') || input.startsWith('/static') || input.startsWith('/views')) {
+            input = window.APP_BASE + input;
+          }
+        }
+        return origFetch.call(this, input, init);
+      };
+    })();
+  </script>
+
+  <!-- Pannellum 360 WebGL Engine untuk Preview & Penentuan Hotspot Interaktif -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css" />
+  <script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+  <link id="tour-stylesheet" rel="stylesheet" href="/static/tour.css" />
+  <script>
+    if (window.APP_BASE) {
+      document.getElementById('tour-stylesheet').href = window.APP_BASE + '/static/tour.css';
+    }
+  </script>
+
+  <style>
+    [x-cloak] { display: none !important; }
+    .editor-pano {
+      width: 100%;
+      height: 380px;
+      border-radius: 1rem;
+      overflow: hidden;
+      position: relative;
+    }
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans antialiased min-h-screen selection:bg-sky-500 selection:text-white" x-data="adminApp()" x-init="initApp()" x-cloak>
+
+  <!-- 1. NOTIFIKASI TOAST GLOBAL -->
+  <div x-show="toast.visible" 
+       x-transition:enter="transition ease-out duration-300 transform"
+       x-transition:enter-start="opacity-0 -translate-y-4"
+       x-transition:enter-end="opacity-100 translate-y-0"
+       x-transition:leave="transition ease-in duration-200 transform"
+       x-transition:leave-start="opacity-100 translate-y-0"
+       x-transition:leave-end="opacity-0 -translate-y-4"
+       class="fixed top-5 right-5 z-50 flex items-center gap-3 px-4 py-3 rounded-2xl shadow-2xl border backdrop-blur-md"
+       :class="toast.type === 'error' ? 'bg-rose-950/90 border-rose-500/50 text-rose-200' : 'bg-emerald-950/90 border-emerald-500/50 text-emerald-200'">
+    <i :data-lucide="toast.type === 'error' ? 'alert-circle' : 'check-circle'" class="w-5 h-5 flex-shrink-0"></i>
+    <span class="text-xs font-semibold" x-text="toast.message"></span>
+  </div>
+
+  <!-- 2. MODAL LOGIN ELEGAN & AMAN (JIKA BELUM TERAUTENTIKASI) -->
+  <div x-show="!isAuthenticated" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/95 backdrop-blur-xl">
+    <div class="absolute w-96 h-96 rounded-full bg-sky-500/15 filter blur-3xl pointer-events-none animate-pulse"></div>
+
+    <div class="relative z-10 bg-slate-900/90 border border-white/15 rounded-3xl max-w-md w-full p-7 sm:p-9 shadow-2xl backdrop-blur-xl">
+      <!-- Header Login: Logo & Judul Dinamis -->
+      <div class="flex items-center gap-4 mb-7">
+        <div class="w-14 h-14 rounded-2xl bg-slate-950/80 p-2 border border-white/15 flex items-center justify-center shadow-lg overflow-hidden flex-shrink-0 relative">
+          <img x-show="Boolean(settings.logoUrl)" :src="getLogoUrl()" alt="Logo Sistem" class="w-full h-full object-contain" @error="onLogoError()" />
+          <div x-show="!Boolean(settings.logoUrl)" class="w-full h-full bg-gradient-to-tr from-sky-600 to-indigo-600 text-white rounded-xl flex items-center justify-center shadow-md">
+            <i data-lucide="shield-check" class="w-7 h-7"></i>
+          </div>
+        </div>
+
+        <div class="min-w-0 flex-1">
+          <h2 class="text-lg sm:text-xl font-bold text-white tracking-tight leading-snug truncate" x-text="settings.appTitle || 'Login Panel Administrator'"></h2>
+          <p class="text-xs text-slate-400 mt-1 line-clamp-2 leading-relaxed" x-text="settings.appSubtitle || 'Portal Kelola Data Tur Virtual 360°'"></p>
+        </div>
+      </div>
+
+      <form @submit.prevent="login()">
+        <div class="space-y-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Nama Pengguna (Username)</label>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                <i data-lucide="user" class="w-4 h-4"></i>
+              </span>
+              <input type="text" x-model="loginForm.username" required placeholder="Masukkan nama pengguna" class="w-full bg-slate-950/90 border border-slate-700/80 focus:border-sky-500 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none transition-colors" />
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Kata Sandi (Password)</label>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                <i data-lucide="lock" class="w-4 h-4"></i>
+              </span>
+              <input :type="showPassword ? 'text' : 'password'" x-model="loginForm.password" required placeholder="Masukkan kata sandi" class="w-full bg-slate-950/90 border border-slate-700/80 focus:border-sky-500 rounded-xl pl-10 pr-10 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none transition-colors" />
+              <button type="button" @click="showPassword = !showPassword" class="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-white transition-colors" title="Lihat/Sembunyikan Sandi">
+                <i :data-lucide="showPassword ? 'eye-off' : 'eye'" class="w-4 h-4"></i>
+              </button>
+            </div>
+          </div>
+
+          <button type="submit" :disabled="loading" class="w-full mt-3 py-3 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 disabled:opacity-50 text-white font-semibold rounded-xl shadow-xl shadow-sky-950/80 transition-all flex items-center justify-center gap-2">
+            <template x-if="loading">
+              <div class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+            </template>
+            <span x-text="loading ? 'Memverifikasi...' : 'Masuk ke Panel Admin'"></span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 3. KONTEN UTAMA SETELAH LOGIN -->
+  <div x-show="isAuthenticated" class="flex flex-col min-h-screen">
+    <!-- Navbar Atas -->
+    <header class="bg-slate-900/90 border-b border-white/10 sticky top-0 z-40 backdrop-blur-md">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-slate-950/80 p-1 border border-white/15 flex items-center justify-center shadow overflow-hidden flex-shrink-0 relative">
+            <img x-show="Boolean(settings.logoUrl)" :src="getLogoUrl()" alt="Logo" class="w-full h-full object-contain" @error="onLogoError()" />
+            <div x-show="!Boolean(settings.logoUrl)" class="w-full h-full p-1 text-sky-400 flex items-center justify-center">
+              <i data-lucide="compass" class="w-5 h-5"></i>
+            </div>
+          </div>
+          <div>
+            <h1 class="text-xs sm:text-sm md:text-base font-bold text-white tracking-wide truncate max-w-[170px] sm:max-w-xs md:max-w-md" x-text="settings.appTitle || 'Panel Admin Tur Virtual 360°'"></h1>
+            <span class="text-[10px] sm:text-[11px] text-sky-400 font-medium block truncate" x-text="settings.appSubtitle || 'Manajemen Destinasi, Panorama, & Hotspot'"></span>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-1.5 sm:gap-2.5">
+          <!-- Tombol Pengaturan Logo & Identitas Sistem -->
+          <button @click="openSettingsModal()" class="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-sky-300 border border-sky-500/30 rounded-xl text-xs font-semibold transition-colors" title="Ubah Logo, Nama Instansi, & Judul Sistem">
+            <i data-lucide="image" class="w-3.5 h-3.5"></i>
+            <span class="hidden md:inline">Logo &amp; Identitas</span>
+          </button>
+
+          <!-- Tombol Info & Konfigurasi Database -->
+          <button @click="openDbModal()" class="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 rounded-xl text-xs font-semibold transition-colors" title="Lihat Status & Konfigurasi Database">
+            <i data-lucide="database" class="w-3.5 h-3.5"></i>
+            <span class="hidden sm:inline">Database</span>
+          </button>
+
+          <!-- Tombol Lihat Web Viewer -->
+          <a :href="selectedDestination ? fixUrl(`/tour/${selectedDestination.slug}`) : fixUrl('/')" target="_blank" class="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 rounded-xl text-xs font-semibold transition-colors">
+            <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+            <span class="hidden sm:inline">Viewer 360°</span>
+          </a>
+
+          <!-- Info Admin & Tombol Keluar -->
+          <div class="flex items-center gap-1.5 sm:gap-2 bg-slate-950/60 border border-white/10 px-2.5 sm:px-3 py-1 rounded-xl">
+            <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+            <button @click="switchTabToAdminUsers()" class="text-xs text-slate-300 font-medium hover:text-amber-400 transition-colors flex items-center gap-1" title="Klik untuk kelola akun admin & ubah password">
+              <span x-text="currentUser?.username || 'admin'"></span>
+              <span class="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded border border-amber-500/30 hidden sm:inline">Dinas</span>
+            </button>
+            <button @click="logout()" title="Keluar Akun" class="text-slate-400 hover:text-rose-400 p-1 transition-colors">
+              <i data-lucide="log-out" class="w-3.5 h-3.5 sm:w-4 sm:h-4"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Navigasi Tab Menu Utama -->
+    <div class="bg-slate-900 border-b border-white/5 sticky top-16 z-30">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="flex space-x-1 sm:space-x-2 py-2 overflow-x-auto no-scrollbar">
+          <button @click="activeTab = 'destinations'" 
+                  class="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap"
+                  :class="activeTab === 'destinations' ? 'bg-sky-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-800'">
+            <i data-lucide="map" class="w-4 h-4"></i>
+            <span>1. Destinasi</span>
+          </button>
+
+          <button @click="activeTab = 'scenes'" 
+                  class="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap"
+                  :class="activeTab === 'scenes' ? 'bg-sky-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-800'">
+            <i data-lucide="image" class="w-4 h-4"></i>
+            <span>2. Panorama (Scenes)</span>
+          </button>
+
+          <button @click="switchTabToHotspots()" 
+                  class="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap"
+                  :class="activeTab === 'hotspots' ? 'bg-sky-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-800'">
+            <i data-lucide="crosshair" class="w-4 h-4"></i>
+            <span>3. Titik Hotspot</span>
+          </button>
+
+          <button @click="switchTabToAdminUsers()" 
+                  class="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap"
+                  :class="activeTab === 'users' ? 'bg-amber-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-800'">
+            <i data-lucide="shield-check" class="w-4 h-4 text-amber-400"></i>
+            <span>4. Admin Dinas</span>
+          </button>
+
+          <button @click="switchTabToDatabase()" 
+                  class="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap"
+                  :class="activeTab === 'database' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-800'">
+            <i data-lucide="database" class="w-4 h-4 text-emerald-400"></i>
+            <span>5. Basis Data (Explorer)</span>
+          </button>
+
+          <button @click="switchTabToGraph()" 
+                  class="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap"
+                  :class="activeTab === 'graph' ? 'bg-purple-600 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-800'">
+            <i data-lucide="network" class="w-4 h-4 text-purple-400"></i>
+            <span>6. Teori Graf (Skripsi)</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Konten Tab -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+      <!-- ======================================================== -->
+      <!-- TAB 1: KELOLA DESTINASI                                   -->
+      <!-- ======================================================== -->
+      <section x-show="activeTab === 'destinations'">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+          <div>
+            <h2 class="text-base sm:text-lg font-bold text-white">Daftar Destinasi Tur 360°</h2>
+            <p class="text-xs text-slate-400">Pilih atau buat lokasi destinasi untuk mengelompokkan panorama virtual.</p>
+          </div>
+          <button @click="openDestinationModal()" class="flex items-center justify-center gap-2 px-4 py-2.5 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded-xl shadow-lg transition-colors flex-shrink-0">
+            <i data-lucide="plus" class="w-4 h-4"></i>
+            <span>Tambah Destinasi Baru</span>
+          </button>
+        </div>
+
+        <!-- Tampilan jika database masih kosong -->
+        <div x-show="destinations.length === 0" class="bg-slate-900/60 border border-dashed border-sky-500/30 rounded-3xl p-8 sm:p-12 text-center flex flex-col items-center justify-center my-6">
+          <div class="w-16 h-16 rounded-2xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 mb-4 shadow-lg shadow-sky-950">
+            <i data-lucide="database" class="w-8 h-8"></i>
+          </div>
+          <h3 class="text-base font-bold text-white mb-2">Basis Data Masih Kosong</h3>
+          <p class="text-xs text-slate-300 max-w-lg mx-auto mb-6 leading-relaxed">
+            Database belum memiliki objek destinasi wisata. Anda dapat langsung mengklik tombol <strong class="text-sky-400">"Isi Data Bawaan Otomatis (Seed)"</strong> untuk langsung memuat data Alun-Alun & Masjid Raya Bandung lengkap dengan 3 Panorama 360° dan Hotspot navigasinya!
+          </p>
+          <div class="flex flex-wrap items-center justify-center gap-3">
+            <button @click="triggerSeedData()" :disabled="seedLoading" class="px-5 py-2.5 bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-500 hover:to-indigo-500 disabled:opacity-50 text-white text-xs font-semibold rounded-xl shadow-lg flex items-center gap-2 transition-all">
+              <template x-if="seedLoading">
+                <div class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+              </template>
+              <template x-if="!seedLoading">
+                <i data-lucide="sparkles" class="w-4 h-4"></i>
+              </template>
+              <span x-text="seedLoading ? 'Sedang Mengisi Data...' : 'Isi Data Bawaan Otomatis (Seed)'"></span>
+            </button>
+            <button @click="openDestinationModal()" class="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 text-xs font-semibold rounded-xl transition-all flex items-center gap-2">
+              <i data-lucide="plus" class="w-4 h-4"></i>
+              <span>Tambah Destinasi Manual</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Grid Kartu Destinasi -->
+        <div x-show="destinations.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          <template x-for="dest in destinations" :key="dest.id">
+            <div class="bg-slate-900 border border-white/10 rounded-2xl overflow-hidden hover:border-sky-500/50 transition-all flex flex-col group shadow-xl">
+              <!-- Thumbnail -->
+              <div class="h-44 w-full relative overflow-hidden bg-slate-950">
+                <img :src="fixUrl(dest.thumbnail_url)" :alt="dest.title" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" :onerror="`this.src='${fixUrl('/uploads/alun_alun_taman.jpg')}'`" />
+                <div class="absolute top-3 right-3 bg-slate-900/80 backdrop-blur-md px-2.5 py-1 rounded-full text-[11px] font-medium text-sky-300 border border-white/10">
+                  <span x-text="(dest.scenes ? dest.scenes.length : dest._count?.scenes || 0) + ' Scene'"></span>
+                </div>
+              </div>
+
+              <!-- Konten -->
+              <div class="p-5 flex-1 flex flex-col justify-between">
+                <div>
+                  <h3 class="font-bold text-base text-white group-hover:text-sky-300 transition-colors" x-text="dest.title"></h3>
+                  <div class="flex items-center gap-1.5 text-xs text-slate-400 font-mono mt-1">
+                    <span>Slug:</span>
+                    <span class="text-sky-400" x-text="dest.slug"></span>
+                  </div>
+                  <p class="text-xs text-slate-300 mt-2.5 line-clamp-3 leading-relaxed" x-text="dest.description"></p>
+                </div>
+
+                <!-- Tombol Aksi -->
+                <div class="mt-5 pt-4 border-t border-white/10 flex items-center justify-between gap-2">
+                  <div class="flex items-center gap-2">
+                    <button @click="selectDestinationForScenes(dest)" class="px-3 py-1.5 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/30 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5">
+                      <i data-lucide="layers" class="w-3.5 h-3.5"></i>
+                      <span>Kelola Scene</span>
+                    </button>
+                    <a :href="fixUrl('/tour/' + dest.slug)" target="_blank" class="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-colors" title="Lihat Tur 360">
+                      <i data-lucide="eye" class="w-4 h-4"></i>
+                    </a>
+                  </div>
+
+                  <div class="flex items-center gap-1">
+                    <button @click="openDestinationModal(dest)" class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors" title="Edit">
+                      <i data-lucide="edit-3" class="w-4 h-4"></i>
+                    </button>
+                    <button @click="deleteDestination(dest.id)" class="p-1.5 text-slate-400 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition-colors" title="Hapus">
+                      <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </section>
+
+      <!-- ======================================================== -->
+      <!-- TAB 2: KELOLA SCENE (PANORAMA 360)                        -->
+      <!-- ======================================================== -->
+      <section x-show="activeTab === 'scenes'">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+          <div>
+            <h2 class="text-base sm:text-lg font-bold text-white">Kelola Panorama 360° (Scenes)</h2>
+            <p class="text-xs text-slate-400">Unggah foto panorama equirectangular (.jpg, .png, .insp) dan tentukan sudut pandang awal.</p>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <!-- Filter Destinasi -->
+            <select x-model="selectedDestinationId" @change="onDestinationChange()" class="bg-slate-900 border border-slate-700 text-xs rounded-xl px-3 py-2 text-white focus:outline-none focus:border-sky-500">
+              <template x-for="dest in destinations" :key="dest.id">
+                <option :value="dest.id" x-text="dest.title"></option>
+              </template>
+            </select>
+
+            <button @click="openSceneModal()" class="flex items-center gap-2 px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded-xl shadow-lg transition-colors whitespace-nowrap">
+              <i data-lucide="plus" class="w-4 h-4"></i>
+              <span>Tambah Panorama</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Tabel Daftar Scene -->
+        <div class="bg-slate-900 border border-white/10 rounded-2xl overflow-hidden shadow-xl">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-slate-950/70 text-slate-400 uppercase tracking-wider border-b border-white/10">
+                <tr>
+                  <th class="px-5 py-3.5">Pratinjau</th>
+                  <th class="px-5 py-3.5">Judul Scene</th>
+                  <th class="px-5 py-3.5">Status Awal</th>
+                  <th class="px-5 py-3.5">Default View (Pitch / Yaw / HFOV)</th>
+                  <th class="px-5 py-3.5">Jumlah Hotspot</th>
+                  <th class="px-5 py-3.5 text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-white/5 text-slate-200">
+                <template x-for="scene in currentScenes" :key="scene.id">
+                  <tr class="hover:bg-slate-800/40 transition-colors">
+                    <td class="px-5 py-3">
+                      <div class="w-16 h-10 rounded-lg overflow-hidden border border-white/20 bg-slate-950">
+                        <img :src="fixUrl(scene.image_url)" :alt="scene.title" class="w-full h-full object-cover" :onerror="`this.src='${fixUrl('/uploads/alun_alun_taman.jpg')}'`" />
+                      </div>
+                    </td>
+                    <td class="px-5 py-3 font-semibold text-white">
+                      <span x-text="scene.title"></span>
+                    </td>
+                    <td class="px-5 py-3">
+                      <template x-if="scene.is_starting_scene">
+                        <span class="inline-flex items-center gap-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded-full text-[10px] font-semibold">
+                          <i data-lucide="star" class="w-3 h-3"></i>
+                          Scene Awal
+                        </span>
+                      </template>
+                      <template x-if="!scene.is_starting_scene">
+                        <span class="text-slate-500 text-[11px]">-</span>
+                      </template>
+                    </td>
+                    <td class="px-5 py-3 font-mono text-[11px] text-sky-400">
+                      <span x-text="`Pitch: ${scene.pitch ?? 0}° | Yaw: ${scene.yaw ?? 0}° | HFOV: ${scene.hfov ?? 100}°`"></span>
+                    </td>
+                    <td class="px-5 py-3 font-mono text-slate-300">
+                      <span x-text="(scene.hotspots ? scene.hotspots.length : 0) + ' Hotspot'"></span>
+                    </td>
+                    <td class="px-5 py-3 text-right">
+                      <div class="flex items-center justify-end gap-2">
+                        <button @click="selectSceneForHotspots(scene)" class="px-2.5 py-1 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/30 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1">
+                          <i data-lucide="crosshair" class="w-3.5 h-3.5"></i>
+                          <span>Kelola Hotspot</span>
+                        </button>
+                        <button @click="openSceneModal(scene)" class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors" title="Edit Scene">
+                          <i data-lucide="edit-3" class="w-4 h-4"></i>
+                        </button>
+                        <button @click="deleteScene(scene.id)" class="p-1.5 text-slate-400 hover:text-rose-400 rounded-lg hover:bg-slate-800 transition-colors" title="Hapus Scene">
+                          <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                </template>
+                <template x-if="currentScenes.length === 0">
+                  <tr>
+                    <td colspan="6" class="px-5 py-8 text-center text-slate-400">
+                      Belum ada scene panorama pada destinasi ini. Silakan klik "Tambah Panorama".
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================================== -->
+      <!-- TAB 3: KELOLA TITIK HOTSPOT & NAVIGASI                     -->
+      <!-- ======================================================== -->
+      <section x-show="activeTab === 'hotspots'">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+          <div>
+            <h2 class="text-base sm:text-lg font-bold text-white">Editor Titik Hotspot & Navigasi 360°</h2>
+            <p class="text-xs text-slate-400">Klik langsung pada viewer panorama 360 di bawah untuk mengambil koordinat Pitch & Yaw secara instan!</p>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <select x-model="selectedSceneId" @change="onSceneSelectForHotspotEditor()" class="bg-slate-900 border border-slate-700 text-xs rounded-xl px-3 py-2 text-white focus:outline-none focus:border-sky-500">
+              <template x-for="scene in currentScenes" :key="scene.id">
+                <option :value="scene.id" x-text="scene.title"></option>
+              </template>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <!-- Kolom Kiri: Viewer Interaktif Penentu Hotspot (7 Kolom) -->
+          <div class="lg:col-span-7 bg-slate-900 border border-white/10 rounded-2xl p-4 shadow-xl">
+            <div class="flex items-center justify-between mb-3 px-1">
+              <div class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
+                <span class="text-xs font-semibold text-white">Visual Click-to-Coordinate</span>
+              </div>
+              <span class="text-[11px] text-sky-400 font-mono">
+                Pandangan Saat Ini: Pitch: <span x-text="activePanoPitch">0.0</span>° | Yaw: <span x-text="activePanoYaw">0.0</span>°
+              </span>
+            </div>
+
+            <!-- Kontainer Pannellum untuk Editor -->
+            <div id="hotspot-editor-panorama" class="editor-pano border border-white/10 bg-slate-950"></div>
+
+            <div class="mt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-400 bg-slate-950/70 p-3 rounded-xl border border-white/5">
+              <div class="flex items-center gap-2">
+                <i data-lucide="mouse-pointer-click" class="w-4 h-4 text-sky-400 flex-shrink-0"></i>
+                <span>Klik area mana saja pada foto 360 untuk mengisi koordinat form di samping.</span>
+              </div>
+              <button @click="syncCoordinatesFromPano()" class="px-2.5 py-1 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/30 rounded-lg text-xs font-semibold whitespace-nowrap">
+                Ambil Posisi Tengah
+              </button>
+            </div>
+          </div>
+
+          <!-- Kolom Kanan: Formulir Tambah/Edit Hotspot & Tabel Hotspot (5 Kolom) -->
+          <div class="lg:col-span-5 space-y-5">
+            <!-- Form Hotspot -->
+            <div class="bg-slate-900 border border-white/10 rounded-2xl p-5 shadow-xl">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                  <i data-lucide="map-pin" class="w-4 h-4 text-sky-400"></i>
+                  <span x-text="editingHotspotId ? 'Perbarui Titik Hotspot' : 'Tambah Titik Hotspot Baru'"></span>
+                </h3>
+                <template x-if="editingHotspotId">
+                  <span class="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full font-semibold">Mode Edit Aktif</span>
+                </template>
+                <template x-if="!editingHotspotId">
+                  <span class="text-[10px] bg-sky-500/20 text-sky-300 border border-sky-500/40 px-2 py-0.5 rounded-full font-semibold">Formulir Baru</span>
+                </template>
+              </div>
+
+              <form @submit.prevent="saveHotspot()">
+                <div class="space-y-3.5">
+                  <!-- Tipe Hotspot -->
+                  <div>
+                    <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">Tipe Hotspot</label>
+                    <div class="grid grid-cols-2 gap-2">
+                      <label class="flex items-center gap-2 p-2.5 rounded-xl border cursor-pointer text-xs transition-colors"
+                             :class="hotspotForm.type === 'nav' ? 'border-sky-500 bg-sky-500/20 text-white' : 'border-slate-800 bg-slate-950 text-slate-400'">
+                        <input type="radio" value="nav" x-model="hotspotForm.type" class="hidden" />
+                        <i data-lucide="navigation" class="w-4 h-4 text-sky-400"></i>
+                        <span>Navigasi Scene</span>
+                      </label>
+                      <label class="flex items-center gap-2 p-2.5 rounded-xl border cursor-pointer text-xs transition-colors"
+                             :class="hotspotForm.type === 'info' ? 'border-amber-500 bg-amber-500/20 text-white' : 'border-slate-800 bg-slate-950 text-slate-400'">
+                        <input type="radio" value="info" x-model="hotspotForm.type" class="hidden" />
+                        <i data-lucide="info" class="w-4 h-4 text-amber-400"></i>
+                        <span>Informasi / Teks</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <!-- Target Scene jika Tipe Navigasi -->
+                  <div x-show="hotspotForm.type === 'nav'">
+                    <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">Scene Tujuan</label>
+                    <select x-model="hotspotForm.target_scene_id" :required="hotspotForm.type === 'nav'" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-sky-500">
+                      <option value="">-- Pilih Scene Tujuan --</option>
+                      <template x-for="scene in currentScenes.filter(s => s.id !== selectedSceneId)" :key="scene.id">
+                        <option :value="scene.id" x-text="scene.title"></option>
+                      </template>
+                    </select>
+                  </div>
+
+                  <!-- Teks Tooltip / Keterangan -->
+                  <div>
+                    <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">Teks Tooltip / Keterangan</label>
+                    <input type="text" x-model="hotspotForm.tooltip_text" required placeholder="Contoh: Menuju Pelataran Masjid" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-sky-500" />
+                  </div>
+
+                  <!-- Koordinat Pitch & Yaw -->
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <div class="flex items-center justify-between mb-1">
+                        <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider">Pitch (° Vertikal)</label>
+                        <span class="text-[10px] text-sky-400 font-mono" x-text="`${hotspotForm.pitch}°`"></span>
+                      </div>
+                      <input type="number" step="0.1" x-model="hotspotForm.pitch" required class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-sky-400 focus:outline-none focus:border-sky-500" />
+                    </div>
+                    <div>
+                      <div class="flex items-center justify-between mb-1">
+                        <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider">Yaw (° Horizontal)</label>
+                        <span class="text-[10px] text-amber-400 font-mono" x-text="`${hotspotForm.yaw}°`"></span>
+                      </div>
+                      <input type="number" step="0.1" x-model="hotspotForm.yaw" required class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-amber-400 focus:outline-none focus:border-sky-500" />
+                    </div>
+                  </div>
+
+                  <!-- Tombol Simpan & Batal -->
+                  <div class="pt-2 flex items-center gap-2">
+                    <button type="submit" class="flex-1 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded-xl shadow-lg transition-colors flex items-center justify-center gap-1.5">
+                      <i data-lucide="save" class="w-3.5 h-3.5"></i>
+                      <span x-text="editingHotspotId ? 'Perbarui Titik' : 'Simpan Titik Hotspot'"></span>
+                    </button>
+                    <template x-if="editingHotspotId">
+                      <button type="button" @click="resetHotspotForm()" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-xl">
+                        Batal
+                      </button>
+                    </template>
+                  </div>
+                </div>
+              </form>
+            </div>
+
+            <!-- Daftar Hotspot Terpasang di Scene Ini -->
+            <div class="bg-slate-900 border border-white/10 rounded-2xl p-5 shadow-xl">
+              <h4 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
+                Hotspot Terpasang (<span x-text="activeSceneHotspots.length"></span>)
+              </h4>
+
+              <div class="space-y-2 max-h-60 overflow-y-auto pr-1">
+                <template x-for="hs in activeSceneHotspots" :key="hs.id">
+                  <div class="flex items-center justify-between p-2.5 rounded-xl border bg-slate-950/70 border-white/5 hover:border-white/15 transition-colors">
+                    <div class="flex items-center gap-2 min-w-0">
+                      <span class="p-1.5 rounded-lg text-white" :class="hs.type === 'nav' ? 'bg-sky-500/20 text-sky-400' : 'bg-amber-500/20 text-amber-400'">
+                        <i :data-lucide="hs.type === 'nav' ? 'navigation' : 'info'" class="w-3.5 h-3.5"></i>
+                      </span>
+                      <div class="min-w-0">
+                        <p class="text-xs font-semibold text-white truncate max-w-[170px]" x-text="hs.tooltip_text"></p>
+                        <p class="text-[10px] font-mono text-slate-400" x-text="`P: ${hs.pitch}° | Y: ${hs.yaw}°`"></p>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-1">
+                      <button @click="editHotspot(hs)" class="p-1 text-slate-400 hover:text-white rounded" title="Edit">
+                        <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+                      </button>
+                      <button @click="deleteHotspot(hs.id)" class="p-1 text-slate-400 hover:text-rose-400 rounded" title="Hapus">
+                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                      </button>
+                    </div>
+                  </div>
+                </template>
+                <template x-if="activeSceneHotspots.length === 0">
+                  <p class="text-xs text-center text-slate-500 py-4">Belum ada hotspot pada scene ini.</p>
+                </template>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================================== -->
+      <!-- TAB 4: KELOLA PENGGUNA ADMIN DINAS (CRUD & UBAH PASSWORD) -->
+      <!-- ======================================================== -->
+      <section x-show="activeTab === 'users'">
+        <!-- Banner & Header -->
+        <div class="mb-6 p-5 rounded-2xl bg-gradient-to-r from-amber-950/80 via-slate-900 to-orange-950/80 border border-amber-500/30 shadow-xl">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div class="flex items-start gap-3">
+              <div class="p-2.5 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30 flex-shrink-0 mt-0.5">
+                <i data-lucide="shield-check" class="w-6 h-6"></i>
+              </div>
+              <div>
+                <h3 class="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                  <span>Manajemen Akun Admin Dinas & Sandi Akses</span>
+                  <span class="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2.5 py-0.5 rounded-full font-mono">Hak Akses Petugas</span>
+                </h3>
+                <p class="text-xs text-slate-300 mt-1 leading-relaxed">
+                  Kelola daftar staf/petugas dinas yang berhak mengelola konten tur virtual. Anda dapat menambah akun baru, mengubah nama pengguna, mengganti kata sandi, serta menghapus akun dengan enkripsi keamanan Bcrypt.
+                </p>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <button @click="openCreateUserModal()" class="px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-semibold flex items-center gap-2 shadow-lg transition-colors">
+                <i data-lucide="user-plus" class="w-4 h-4"></i>
+                <span>+ Tambah Admin Baru</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3 Kartu Ringkasan Informasi -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+          <div class="bg-slate-900 border border-white/10 p-4 rounded-2xl shadow-lg">
+            <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Total Pengguna Terdaftar</span>
+            <div class="mt-2 flex items-baseline gap-2">
+              <span class="text-2xl font-extrabold text-amber-400" x-text="adminUsers.length"></span>
+              <span class="text-xs text-slate-400">Akun Administrator</span>
+            </div>
+          </div>
+
+          <div class="bg-slate-900 border border-white/10 p-4 rounded-2xl shadow-lg">
+            <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Akun Anda Saat Ini</span>
+            <div class="mt-2 flex items-center gap-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span class="text-base font-bold text-emerald-300 font-mono" x-text="currentUser?.username || 'admin'"></span>
+              <span class="text-[10px] bg-emerald-950 text-emerald-300 px-2 py-0.5 rounded border border-emerald-500/30">Sesi Aktif</span>
+            </div>
+          </div>
+
+          <div class="bg-slate-900 border border-white/10 p-4 rounded-2xl shadow-lg">
+            <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Standar Keamanan Kata Sandi</span>
+            <div class="mt-2 flex items-center gap-2">
+              <i data-lucide="lock" class="w-4 h-4 text-sky-400"></i>
+              <span class="text-xs text-slate-300 font-medium">Bcrypt Hashing 10 Rounds &amp; JWT</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tabel Daftar Admin Dinas -->
+        <div class="bg-slate-900 border border-white/10 rounded-2xl overflow-hidden shadow-xl">
+          <div class="p-4 border-b border-white/10 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <i data-lucide="users" class="w-4 h-4 text-amber-400"></i>
+              <h4 class="text-xs sm:text-sm font-bold text-white">Daftar Akun Pengguna Administrator</h4>
+            </div>
+            <button @click="fetchAdminUsers()" class="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors" title="Muat Ulang Data">
+              <i data-lucide="refresh-cw" class="w-4 h-4" :class="adminUsersLoading ? 'animate-spin' : ''"></i>
+            </button>
+          </div>
+
+          <div class="overflow-x-auto">
+            <template x-if="adminUsersLoading">
+              <div class="py-12 text-center text-slate-400 text-xs flex flex-col items-center gap-2">
+                <div class="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
+                <span>Memuat daftar akun admin dinas...</span>
+              </div>
+            </template>
+
+            <template x-if="!adminUsersLoading">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-slate-950/60 text-slate-400 uppercase tracking-wider font-semibold border-b border-white/5">
+                  <tr>
+                    <th class="px-5 py-3 w-12 text-center">No</th>
+                    <th class="px-5 py-3">Nama Pengguna (Username)</th>
+                    <th class="px-5 py-3">Peran / Otoritas</th>
+                    <th class="px-5 py-3">Status Sesi</th>
+                    <th class="px-5 py-3">Terakhir Diperbarui</th>
+                    <th class="px-5 py-3 text-right">Aksi (CRUD)</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-white/5">
+                  <template x-for="(user, idx) in adminUsers" :key="user.id">
+                    <tr class="hover:bg-slate-800/40 transition-colors">
+                      <td class="px-5 py-4 text-center font-mono text-slate-500" x-text="idx + 1"></td>
+                      <td class="px-5 py-4 font-medium text-white">
+                        <div class="flex items-center gap-3">
+                          <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-amber-600 to-orange-500 flex items-center justify-center text-white font-bold text-xs uppercase shadow-md" x-text="user.username.charAt(0)"></div>
+                          <div>
+                            <span class="font-bold text-sm block" x-text="user.username"></span>
+                            <span class="text-[10px] text-slate-400 font-mono" x-text="'ID: ' + user.id.slice(0, 8) + '...'"></span>
+                          </div>
+                        </div>
+                      </td>
+                      <td class="px-5 py-4">
+                        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                          <i data-lucide="shield" class="w-3 h-3"></i>
+                          <span>Admin Dinas Wisata</span>
+                        </span>
+                      </td>
+                      <td class="px-5 py-4">
+                        <template x-if="currentUser && currentUser.id === user.id">
+                          <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                            <span>Sedang Digunakan</span>
+                          </span>
+                        </template>
+                        <template x-if="!currentUser || currentUser.id !== user.id">
+                          <span class="text-[11px] text-slate-400">Tersedia</span>
+                        </template>
+                      </td>
+                      <td class="px-5 py-4 text-slate-300 font-mono text-[11px]" x-text="new Date(user.updatedAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })"></td>
+                      <td class="px-5 py-4 text-right">
+                        <div class="flex items-center justify-end gap-2">
+                          <button @click="openEditUserModal(user)" class="px-3 py-1.5 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/30 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5" title="Ubah username atau ganti password">
+                            <i data-lucide="key" class="w-3.5 h-3.5"></i>
+                            <span>Ubah Sandi / Edit</span>
+                          </button>
+
+                          <button @click="deleteAdminUser(user.id, user.username)" 
+                                  :disabled="(currentUser && currentUser.id === user.id) || adminUsers.length <= 1"
+                                  class="p-1.5 rounded-lg border transition-colors"
+                                  :class="((currentUser && currentUser.id === user.id) || adminUsers.length <= 1) ? 'text-slate-600 border-transparent cursor-not-allowed opacity-40' : 'text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 border-slate-700/50'"
+                                  :title="(currentUser && currentUser.id === user.id) ? 'Tidak dapat menghapus akun Anda sendiri' : (adminUsers.length <= 1 ? 'Sistem harus menyisakan minimal satu admin' : 'Hapus akun ini')">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </template>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================================== -->
+      <!-- TAB 5: PENJELAJAH BASIS DATA (MIRIP PHPMYADMIN)          -->
+      <!-- ======================================================== -->
+      <section x-show="activeTab === 'database'">
+        <!-- Banner Penjelasan Komparasi dengan XAMPP -->
+        <div class="mb-6 p-4 rounded-2xl bg-gradient-to-r from-emerald-950/80 via-slate-900 to-sky-950/80 border border-emerald-500/30 shadow-xl">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div class="flex items-start gap-3">
+              <div class="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl border border-emerald-500/30 flex-shrink-0 mt-0.5">
+                <i data-lucide="database" class="w-6 h-6"></i>
+              </div>
+              <div>
+                <h3 class="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                  <span>Penjelajah Basis Data (Database Explorer)</span>
+                  <span class="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full font-mono">SQLite / dev.db</span>
+                </h3>
+                <p class="text-xs text-slate-300 mt-1 leading-relaxed">
+                  <span class="font-bold text-emerald-400">Di XAMPP:</span> Anda membuka <code class="bg-black/40 px-1 py-0.5 rounded text-amber-300">localhost/phpmyadmin</code>.<br class="hidden sm:inline" />
+                  <span class="font-bold text-sky-400">Di Aplikasi Ini:</span> Anda bisa menginspeksi tabel langsung di layar ini, ATAU jalankan perintah <code class="bg-black/40 px-1.5 py-0.5 rounded text-sky-300 font-mono">npx prisma studio</code> di terminal untuk membuka GUI visual di <code class="bg-black/40 px-1 py-0.5 rounded text-sky-300">localhost:5555</code>.
+                </p>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <button @click="openDbModal()" class="px-3 py-2 bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors">
+                <i data-lucide="info" class="w-4 h-4"></i>
+                <span>Info Koneksi</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tombol Pilihan Tabel (Mirip Sidebar phpMyAdmin) -->
+        <div class="flex flex-wrap items-center gap-2 mb-4">
+          <span class="text-xs font-bold text-slate-400 uppercase tracking-wider mr-1">Pilih Tabel:</span>
+          
+          <button @click="selectDbTable('Destination')" 
+                  class="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all"
+                  :class="activeDbTable === 'Destination' ? 'bg-sky-600 text-white shadow-lg' : 'bg-slate-900 border border-white/10 text-slate-400 hover:text-white'">
+            <i data-lucide="map" class="w-3.5 h-3.5"></i>
+            <span>Destination (Destinasi)</span>
+          </button>
+
+          <button @click="selectDbTable('Scene')" 
+                  class="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all"
+                  :class="activeDbTable === 'Scene' ? 'bg-sky-600 text-white shadow-lg' : 'bg-slate-900 border border-white/10 text-slate-400 hover:text-white'">
+            <i data-lucide="image" class="w-3.5 h-3.5"></i>
+            <span>Scene (Panorama 360)</span>
+          </button>
+
+          <button @click="selectDbTable('Hotspot')" 
+                  class="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all"
+                  :class="activeDbTable === 'Hotspot' ? 'bg-sky-600 text-white shadow-lg' : 'bg-slate-900 border border-white/10 text-slate-400 hover:text-white'">
+            <i data-lucide="crosshair" class="w-3.5 h-3.5"></i>
+            <span>Hotspot (Titik Koordinat)</span>
+          </button>
+
+          <button @click="selectDbTable('AdminUser')" 
+                  class="flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all"
+                  :class="activeDbTable === 'AdminUser' ? 'bg-sky-600 text-white shadow-lg' : 'bg-slate-900 border border-white/10 text-slate-400 hover:text-white'">
+            <i data-lucide="shield-check" class="w-3.5 h-3.5"></i>
+            <span>AdminUser (Pengguna)</span>
+          </button>
+
+          <div class="ml-auto flex items-center gap-2">
+            <button @click="fetchDbTable(activeDbTable)" class="p-2 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-white/10 rounded-xl text-xs transition-colors" title="Segarkan Data">
+              <i data-lucide="refresh-cw" class="w-4 h-4" :class="dbTableLoading ? 'animate-spin' : ''"></i>
+            </button>
+            <button @click="toggleJsonView()" class="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-white/10 rounded-xl text-xs font-medium transition-colors">
+              <span x-text="showJsonView ? 'Tampilan Tabel' : 'Tampilan JSON'"></span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Tabel Data (phpMyAdmin Data Grid) -->
+        <div class="bg-slate-900 border border-white/10 rounded-2xl overflow-hidden shadow-xl">
+          <div class="p-4 bg-slate-950/60 border-b border-white/10 flex items-center justify-between text-xs">
+            <div class="flex items-center gap-2">
+              <span class="text-slate-400">Tabel Aktif:</span>
+              <code class="font-mono font-bold text-sky-400 bg-sky-950/60 px-2 py-0.5 rounded border border-sky-500/30" x-text="activeDbTable"></code>
+            </div>
+            <span class="text-slate-400" x-text="`Total Baris Data: ${dbTableData.length} rekaman`"></span>
+          </div>
+
+          <!-- Tampilan Grid Tabel Normal -->
+          <div x-show="!showJsonView" class="overflow-x-auto max-h-[500px]">
+            <template x-if="dbTableData.length > 0">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-slate-950/80 text-slate-400 uppercase tracking-wider border-b border-white/10 sticky top-0 backdrop-blur-md">
+                  <tr>
+                    <template x-for="col in Object.keys(dbTableData[0] || {})" :key="col">
+                      <th class="px-4 py-3 font-semibold whitespace-nowrap" x-text="col"></th>
+                    </template>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-white/5 text-slate-200 font-mono text-[11px]">
+                  <template x-for="(row, idx) in dbTableData" :key="idx">
+                    <tr class="hover:bg-slate-800/50 transition-colors">
+                      <template x-for="col in Object.keys(dbTableData[0] || {})" :key="col">
+                        <td class="px-4 py-2.5 max-w-xs truncate" :title="typeof row[col] === 'object' ? JSON.stringify(row[col]) : String(row[col])">
+                          <template x-if="typeof row[col] === 'boolean'">
+                            <span :class="row[col] ? 'text-emerald-400 font-bold' : 'text-slate-500'" x-text="row[col] ? 'TRUE' : 'FALSE'"></span>
+                          </template>
+                          <template x-if="typeof row[col] === 'object' && row[col] !== null">
+                            <span class="text-amber-300" x-text="JSON.stringify(row[col])"></span>
+                          </template>
+                          <template x-if="typeof row[col] !== 'boolean' && (typeof row[col] !== 'object' || row[col] === null)">
+                            <span :class="col.includes('id') ? 'text-slate-400' : 'text-slate-200'" x-text="row[col] === null ? 'NULL' : row[col]"></span>
+                          </template>
+                        </td>
+                      </template>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </template>
+
+            <template x-if="dbTableData.length === 0 && !dbTableLoading">
+              <div class="py-12 text-center text-slate-400 text-xs">
+                Tabel ini belum memiliki data rekaman.
+              </div>
+            </template>
+          </div>
+
+          <!-- Tampilan JSON Raw -->
+          <div x-show="showJsonView" class="p-4 bg-slate-950 max-h-[500px] overflow-y-auto">
+            <pre class="text-[11px] font-mono text-sky-300 whitespace-pre-wrap" x-text="JSON.stringify(dbTableData, null, 2)"></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- ======================================================== -->
+      <!-- TAB 6: ANALISIS TEORI GRAF (SKRIPSI INFORMATIKA)         -->
+      <!-- Digraph G = (V,E), Matriks Adjasensi, & Reachability BFS -->
+      <!-- ======================================================== -->
+      <section x-show="activeTab === 'graph'">
+        <div class="mb-6 p-5 rounded-2xl bg-gradient-to-r from-purple-950/80 via-slate-900 to-indigo-950/80 border border-purple-500/30 shadow-xl">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div class="flex items-start gap-3">
+              <div class="p-2.5 bg-purple-500/20 text-purple-400 rounded-xl border border-purple-500/30 flex-shrink-0 mt-0.5">
+                <i data-lucide="network" class="w-6 h-6"></i>
+              </div>
+              <div>
+                <h3 class="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                  <span>Pemodelan Matematis: Teori Graf Berarah (Digraph G = (V, E))</span>
+                  <span class="text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/40 px-2.5 py-0.5 rounded-full font-mono">Modul Skripsi</span>
+                </h3>
+                <p class="text-xs text-slate-300 mt-1 leading-relaxed">
+                  Ruang tur virtual dimodelkan sebagai graf berarah di mana <span class="text-purple-300 font-bold">V (Vertices)</span> adalah Scene Panorama dan <span class="text-sky-300 font-bold">E (Edges)</span> adalah Hotspot Navigasi. Modul ini membuktikan integritas keterjangkauan simpul (*Node Reachability*) dan matriks adjasensi untuk bab 4 skripsi Anda.
+                </p>
+              </div>
+            </div>
+
+            <button @click="fetchGraphAnalysis()" class="px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-semibold flex items-center gap-2 shadow-lg transition-colors flex-shrink-0">
+              <i data-lucide="refresh-cw" class="w-3.5 h-3.5" :class="graphLoading ? 'animate-spin' : ''"></i>
+              <span>Hitung Ulang Metrik Graf</span>
+            </button>
+          </div>
+        </div>
+
+        <template x-if="graphAnalysisData">
+          <div class="space-y-6">
+            <!-- 4 Kartu Metrik Graf Utama -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div class="bg-slate-900 border border-white/10 p-4 rounded-2xl shadow-lg">
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Jumlah Simpul (|V|)</span>
+                <div class="mt-2 flex items-baseline gap-2">
+                  <span class="text-2xl font-extrabold text-purple-400" x-text="graphAnalysisData.metrics.vertices"></span>
+                  <span class="text-xs text-slate-400">Scene Panorama</span>
+                </div>
+              </div>
+
+              <div class="bg-slate-900 border border-white/10 p-4 rounded-2xl shadow-lg">
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Jumlah Busur/Sisi (|E|)</span>
+                <div class="mt-2 flex items-baseline gap-2">
+                  <span class="text-2xl font-extrabold text-sky-400" x-text="graphAnalysisData.metrics.edges"></span>
+                  <span class="text-xs text-slate-400">Hotspot Navigasi</span>
+                </div>
+              </div>
+
+              <div class="bg-slate-900 border border-white/10 p-4 rounded-2xl shadow-lg">
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Kerapatan Graf (Density)</span>
+                <div class="mt-2 flex items-baseline gap-2">
+                  <span class="text-2xl font-extrabold text-emerald-400" x-text="graphAnalysisData.metrics.density"></span>
+                  <span class="text-xs font-mono text-slate-400">D = |E|/(|V|(|V|-1))</span>
+                </div>
+              </div>
+
+              <div class="bg-slate-900 border border-white/10 p-4 rounded-2xl shadow-lg">
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Integritas Penelusuran</span>
+                <div class="mt-2 flex items-center gap-1.5">
+                  <span class="w-2.5 h-2.5 rounded-full" :class="graphAnalysisData.metrics.isFullyTraversable ? 'bg-emerald-400' : 'bg-rose-400'"></span>
+                  <span class="text-xs font-bold" :class="graphAnalysisData.metrics.isFullyTraversable ? 'text-emerald-300' : 'text-rose-300'" x-text="graphAnalysisData.metrics.isFullyTraversable ? 'Semua Simpul Terjangkau' : 'Ada Simpul Buntu'"></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Matriks Adjasensi Biner (Adjacency Matrix) -->
+            <div class="bg-slate-900 border border-white/10 p-5 rounded-2xl shadow-xl">
+              <div class="flex items-center justify-between mb-4">
+                <div>
+                  <h4 class="text-sm font-bold text-white flex items-center gap-2">
+                    <i data-lucide="grid" class="w-4 h-4 text-purple-400"></i>
+                    <span>Matriks Adjasensi Biner A[i][j]</span>
+                  </h4>
+                  <p class="text-xs text-slate-400 mt-0.5">Nilai 1 menandakan terdapat hotspot langsung dari simpul baris ke simpul kolom.</p>
+                </div>
+                <span class="text-[11px] font-mono text-purple-300 bg-purple-950/60 border border-purple-500/30 px-2.5 py-1 rounded-full">
+                  Ukuran: <span x-text="`${graphAnalysisData.metrics.vertices} × ${graphAnalysisData.metrics.vertices}`"></span>
+                </span>
+              </div>
+
+              <div class="overflow-x-auto">
+                <table class="w-full text-center text-xs font-mono border-collapse">
+                  <thead>
+                    <tr class="bg-slate-950/80 text-slate-300 border-b border-white/10">
+                      <th class="p-3 text-left font-sans">Simpul Asal \ Tujuan</th>
+                      <template x-for="(label, idx) in graphAnalysisData.adjacencyMatrix.labels" :key="idx">
+                        <th class="p-3 whitespace-nowrap" :title="label" x-text="`S${idx+1}`"></th>
+                      </template>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-white/5">
+                    <template x-for="(row, rIdx) in graphAnalysisData.adjacencyMatrix.matrix" :key="rIdx">
+                      <tr class="hover:bg-slate-800/40 transition-colors">
+                        <td class="p-3 text-left font-sans font-semibold text-slate-200">
+                          <span class="text-purple-400 font-mono mr-1" x-text="`S${rIdx+1}:`"></span>
+                          <span x-text="graphAnalysisData.adjacencyMatrix.labels[rIdx]"></span>
+                        </td>
+                        <template x-for="(val, cIdx) in row" :key="cIdx">
+                          <td class="p-3">
+                            <span class="inline-block w-7 h-7 leading-7 rounded-lg font-bold"
+                                  :class="val === 1 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-slate-950/60 text-slate-600'">
+                              <span x-text="val"></span>
+                            </span>
+                          </td>
+                        </template>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Tabel Derajat Simpul & Deteksi Dead-End -->
+            <div class="bg-slate-900 border border-white/10 p-5 rounded-2xl shadow-xl">
+              <h4 class="text-sm font-bold text-white mb-3 flex items-center gap-2">
+                <i data-lucide="git-commit" class="w-4 h-4 text-sky-400"></i>
+                <span>Tabel Derajat Simpul (Degree Analysis) & Deteksi Dead End</span>
+              </h4>
+
+              <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs">
+                  <thead class="bg-slate-950/80 text-slate-400 uppercase tracking-wider border-b border-white/10">
+                    <tr>
+                      <th class="px-4 py-3">Simpul</th>
+                      <th class="px-4 py-3">Nama Scene</th>
+                      <th class="px-4 py-3">Derajat Masuk (In-Degree)</th>
+                      <th class="px-4 py-3">Derajat Keluar (Out-Degree)</th>
+                      <th class="px-4 py-3">Status Keterhubungan Topologi</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-white/5 text-slate-200">
+                    <template x-for="v in graphAnalysisData.vertices" :key="v.id">
+                      <tr class="hover:bg-slate-800/40 transition-colors">
+                        <td class="px-4 py-3 font-mono text-purple-400 font-bold" x-text="`S${v.index+1}`"></td>
+                        <td class="px-4 py-3 font-semibold text-white" x-text="v.title"></td>
+                        <td class="px-4 py-3 font-mono text-sky-300" x-text="v.inDegree"></td>
+                        <td class="px-4 py-3 font-mono text-amber-300" x-text="v.outDegree"></td>
+                        <td class="px-4 py-3">
+                          <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold"
+                                :class="v.status === 'Normal Terhubung' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'">
+                            <span class="w-1.5 h-1.5 rounded-full" :class="v.status === 'Normal Terhubung' ? 'bg-emerald-400' : 'bg-rose-400'"></span>
+                            <span x-text="v.status"></span>
+                          </span>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </template>
+      </section>
+    </main>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- MODAL TAMBAH / EDIT DESTINASI                            -->
+  <!-- ======================================================== -->
+  <div x-show="showDestModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+    <div class="bg-slate-900 border border-white/15 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">
+      <button @click="showDestModal = false" class="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <h3 class="text-base font-bold text-white mb-4" x-text="destForm.id ? 'Perbarui Destinasi' : 'Tambah Destinasi Baru'"></h3>
+
+      <form @submit.prevent="saveDestination()">
+        <div class="space-y-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">Judul Destinasi</label>
+            <input type="text" x-model="destForm.title" required @input="autoSlug()" placeholder="Contoh: Alun-Alun dan Masjid Raya Bandung" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-sky-500" />
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">Slug URL</label>
+            <input type="text" x-model="destForm.slug" required placeholder="alun-alun-dan-masjid-raya-bandung" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-xs font-mono text-sky-400 focus:outline-none focus:border-sky-500" />
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">Deskripsi Lengkap</label>
+            <textarea x-model="destForm.description" rows="3" required placeholder="Tuliskan gambaran ringkas tentang lokasi tur..." class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-sky-500"></textarea>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Gambar Thumbnail Destinasi</label>
+            
+            <div class="bg-slate-950/80 p-3.5 rounded-xl border border-dashed border-sky-500/40 hover:border-sky-400 transition-colors">
+              <div class="flex items-center gap-3">
+                <label class="flex-shrink-0 cursor-pointer px-3.5 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-semibold shadow-md transition-colors flex items-center gap-1.5">
+                  <i data-lucide="upload" class="w-3.5 h-3.5"></i>
+                  <span>Pilih Gambar dari Laptop</span>
+                  <input type="file" @change="uploadDestThumbnail($event)" accept="image/*" class="hidden" />
+                </label>
+                <span class="text-[11px] text-slate-400 truncate">Unggah langsung tanpa perlu buka cPanel / FTP.</span>
+              </div>
+
+              <!-- Pratinjau Gambar Langsung -->
+              <template x-if="destForm.thumbnail_url">
+                <div class="mt-3 flex items-center gap-3 p-2 bg-slate-900 rounded-lg border border-white/10">
+                  <div class="w-16 h-11 rounded-md overflow-hidden bg-black flex-shrink-0 border border-white/20">
+                    <img :src="fixUrl(destForm.thumbnail_url)" alt="Pratinjau Thumbnail" class="w-full h-full object-cover" :onerror="`this.src='${fixUrl('/uploads/alun_alun_taman.jpg')}'`" />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <span class="text-[10px] text-emerald-400 font-bold block">✓ Gambar Siap Digunakan</span>
+                    <span class="text-[11px] font-mono text-slate-300 truncate block" x-text="destForm.thumbnail_url"></span>
+                  </div>
+                </div>
+              </template>
+            </div>
+
+            <div class="mt-2">
+              <span class="text-[10px] text-slate-500">Atau masukkan URL / path gambar manual:</span>
+              <input type="text" x-model="destForm.thumbnail_url" placeholder="/uploads/alun_alun_taman.jpg" class="mt-1 w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-400 focus:outline-none focus:border-sky-500" />
+            </div>
+          </div>
+
+          <div class="pt-3 flex justify-end gap-2">
+            <button type="button" @click="showDestModal = false" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl">Batal</button>
+            <button type="submit" class="px-5 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded-xl shadow-lg">Simpan</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- MODAL TAMBAH / EDIT SCENE (UPLOAD PANORAMA 360)          -->
+  <!-- ======================================================== -->
+  <div x-show="showSceneModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+    <div class="bg-slate-900 border border-white/15 rounded-2xl max-w-xl w-full p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+      <button @click="showSceneModal = false" class="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <h3 class="text-base font-bold text-white mb-4" x-text="sceneForm.id ? 'Perbarui Scene Panorama' : 'Tambah Scene Panorama Baru'"></h3>
+
+      <form @submit.prevent="saveScene()">
+        <div class="space-y-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">Destinasi</label>
+            <select x-model="sceneForm.destination_id" required class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-sky-500">
+              <template x-for="dest in destinations" :key="dest.id">
+                <option :value="dest.id" x-text="dest.title"></option>
+              </template>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">Judul Scene</label>
+            <input type="text" x-model="sceneForm.title" required placeholder="Contoh: Taman Rumput Sintetis Alun-Alun" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-sky-500" />
+          </div>
+
+          <!-- Unggah Berkas Panorama (Multer) -->
+          <div class="bg-slate-950/80 p-4 rounded-xl border border-dashed border-sky-500/40 hover:border-sky-400 transition-colors">
+            <div class="flex items-center gap-3">
+              <label class="flex-shrink-0 cursor-pointer px-3.5 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-semibold shadow-md transition-colors flex items-center gap-1.5" :class="uploadingPano ? 'opacity-50 pointer-events-none' : ''">
+                <i data-lucide="upload" class="w-3.5 h-3.5"></i>
+                <span>Pilih Foto Panorama 360 dari Laptop</span>
+                <input type="file" @change="uploadPanoramaFile($event)" accept=".jpg,.jpeg,.png,.webp,.insp" class="hidden" :disabled="uploadingPano" />
+              </label>
+              <span class="text-[11px] text-slate-400 truncate">Format didukung: .jpg, .png, dan .insp (Insta360).</span>
+            </div>
+
+            <!-- Status & Indikator Persentase Unggah Riil -->
+            <div x-show="uploadingPano" class="mt-3 p-3 bg-slate-900 rounded-xl border border-sky-500/30">
+              <div class="flex items-center justify-between text-xs font-semibold text-sky-300 mb-1.5">
+                <span class="flex items-center gap-2">
+                  <div class="w-3.5 h-3.5 border-2 border-sky-400 border-t-transparent rounded-full animate-spin"></div>
+                  <span x-text="panoUploadStatus">Mengunggah foto 360...</span>
+                </span>
+                <span class="font-mono text-sky-400 font-bold" x-text="`${panoUploadPercent}%`"></span>
+              </div>
+              <div class="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-white/10">
+                <div class="bg-gradient-to-r from-sky-500 to-emerald-400 h-full rounded-full transition-all duration-150" :style="`width: ${panoUploadPercent}%`"></div>
+              </div>
+            </div>
+
+            <!-- Pratinjau Foto Panorama -->
+            <template x-if="sceneForm.image_url || localPanoPreview">
+              <div class="mt-3 flex items-center gap-3 p-2 bg-slate-900 rounded-lg border border-white/10">
+                <div class="w-20 h-12 rounded-md overflow-hidden bg-black flex-shrink-0 border border-white/20">
+                  <img :src="getPanoPreviewUrl()" alt="Pratinjau Panorama" class="w-full h-full object-cover" />
+                </div>
+                <div class="min-w-0 flex-1">
+                  <span class="text-[10px] text-emerald-400 font-bold block" x-text="uploadingPano ? 'Sedang Memproses Unggahan...' : '✓ Foto Siap Digunakan'"></span>
+                  <span class="text-[11px] font-mono text-slate-300 truncate block" x-text="sceneForm.image_url"></span>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <div>
+            <span class="text-[10px] text-slate-500">Atau masukkan URL / path gambar manual:</span>
+            <input type="text" x-model="sceneForm.image_url" required placeholder="/uploads/alun_alun_taman.jpg" class="mt-1 w-full bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-400 focus:outline-none focus:border-sky-500" />
+          </div>
+
+          <!-- Parameter Tampilan Awal -->
+          <div class="grid grid-cols-3 gap-3">
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-300 mb-1">Pitch (° Vertikal)</label>
+              <input type="number" step="0.5" x-model="sceneForm.pitch" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-white" />
+            </div>
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-300 mb-1">Yaw (° Horizontal)</label>
+              <input type="number" step="0.5" x-model="sceneForm.yaw" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-white" />
+            </div>
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-300 mb-1">HFOV (Zoom Lapangan)</label>
+              <input type="number" step="1" x-model="sceneForm.hfov" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-white" />
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2 pt-1">
+            <input type="checkbox" id="starting_check" x-model="sceneForm.is_starting_scene" class="rounded text-sky-500 bg-slate-950 border-slate-700" />
+            <label for="starting_check" class="text-xs text-slate-300 cursor-pointer font-medium">Jadikan Scene Awal Tur (Starting Scene)</label>
+          </div>
+
+          <div class="pt-3 flex justify-end gap-2">
+            <button type="button" @click="showSceneModal = false" :disabled="uploadingPano" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 text-xs font-semibold rounded-xl">Batal</button>
+            <button type="submit" :disabled="uploadingPano" class="px-5 py-2 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-semibold rounded-xl shadow-lg flex items-center gap-2">
+              <template x-if="uploadingPano">
+                <div class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+              </template>
+              <span x-text="uploadingPano ? 'Sedang Mengunggah...' : 'Simpan Panorama'"></span>
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- MODAL INFORMASI & KONFIGURASI BASIS DATA (DATABASE)       -->
+  <!-- ======================================================== -->
+  <div x-show="showDbModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+    <div class="bg-slate-900 border border-emerald-500/30 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">
+      <button @click="showDbModal = false" class="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <div class="flex items-center gap-3 mb-4">
+        <div class="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl border border-emerald-500/30">
+          <i data-lucide="database" class="w-6 h-6"></i>
+        </div>
+        <div>
+          <h3 class="text-base font-bold text-white">Status & Konfigurasi Basis Data</h3>
+          <p class="text-xs text-slate-400">Informasi koneksi dan statistik SQLite via Prisma ORM</p>
+        </div>
+      </div>
+
+      <template x-if="dbInfo">
+        <div class="space-y-4">
+          <!-- Status Koneksi -->
+          <div class="flex items-center justify-between p-3 rounded-xl bg-slate-950/70 border border-white/5">
+            <span class="text-xs text-slate-300 font-medium">Status Koneksi</span>
+            <span class="flex items-center gap-1.5 text-xs font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2.5 py-1 rounded-full">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+              <span x-text="dbInfo.config.status"></span>
+            </span>
+          </div>
+
+          <!-- Parameter Teknis -->
+          <div class="space-y-2 text-xs">
+            <div class="p-2.5 rounded-xl bg-slate-950/50 border border-white/5 flex justify-between">
+              <span class="text-slate-400">Tipe Basis Data:</span>
+              <span class="font-semibold text-white" x-text="dbInfo.config.provider"></span>
+            </div>
+            <div class="p-2.5 rounded-xl bg-slate-950/50 border border-white/5 flex justify-between">
+              <span class="text-slate-400">Berkas Skema (Prisma):</span>
+              <code class="font-mono text-sky-400" x-text="dbInfo.config.configFile"></code>
+            </div>
+            <div class="p-2.5 rounded-xl bg-slate-950/50 border border-white/5 flex justify-between">
+              <span class="text-slate-400">Berkas Fisik Database:</span>
+              <code class="font-mono text-amber-400" x-text="dbInfo.config.filePath"></code>
+            </div>
+            <div class="p-2.5 rounded-xl bg-slate-950/50 border border-white/5 flex justify-between">
+              <span class="text-slate-400">Ukuran Berkas Database:</span>
+              <span class="font-semibold text-white" x-text="dbInfo.config.fileSize"></span>
+            </div>
+          </div>
+
+          <!-- Statistik Tabel -->
+          <div>
+            <h4 class="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Jumlah Data Tabel:</h4>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div class="p-2.5 rounded-xl bg-slate-950/70 border border-white/5 text-center">
+                <span class="block text-lg font-bold text-sky-400" x-text="dbInfo.stats.destinations"></span>
+                <span class="text-[10px] text-slate-400">Destinasi</span>
+              </div>
+              <div class="p-2.5 rounded-xl bg-slate-950/70 border border-white/5 text-center">
+                <span class="block text-lg font-bold text-amber-400" x-text="dbInfo.stats.scenes"></span>
+                <span class="text-[10px] text-slate-400">Scenes</span>
+              </div>
+              <div class="p-2.5 rounded-xl bg-slate-950/70 border border-white/5 text-center">
+                <span class="block text-lg font-bold text-emerald-400" x-text="dbInfo.stats.hotspots"></span>
+                <span class="text-[10px] text-slate-400">Hotspots</span>
+              </div>
+              <div class="p-2.5 rounded-xl bg-slate-950/70 border border-white/5 text-center">
+                <span class="block text-lg font-bold text-purple-400" x-text="dbInfo.stats.adminUsers"></span>
+                <span class="text-[10px] text-slate-400">Admin</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Petunjuk Visual Database Browser (Prisma Studio) -->
+          <div class="p-3 rounded-xl bg-sky-950/40 border border-sky-500/30 text-xs text-sky-200">
+            <span class="font-bold text-sky-400">Buka GUI Visual Database via Terminal:</span>
+            <p class="mt-1 text-[11px] text-slate-300">
+              Jalankan perintah berikut di terminal untuk membuka antarmuka visual data (Prisma Studio):
+            </p>
+            <div class="mt-2 bg-slate-950 px-3 py-1.5 rounded-lg border border-sky-500/40 font-mono text-[11px] text-sky-300">
+              npx prisma studio
+            </div>
+            <p class="mt-1 text-[10px] text-slate-400">Lalu buka browser di <code>http://localhost:5555</code></p>
+          </div>
+        </div>
+      </template>
+
+      <div class="mt-5 flex justify-end">
+        <button type="button" @click="showDbModal = false" class="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-xl">
+          Tutup
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- MODAL TAMBAH ADMIN DINAS BARU                            -->
+  <!-- ======================================================== -->
+  <div x-show="showCreateUserModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm" style="display: none;">
+    <div class="bg-slate-900 border border-white/15 rounded-2xl max-w-md w-full p-6 shadow-2xl relative">
+      <button @click="showCreateUserModal = false" class="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <div class="flex items-center gap-3 mb-4">
+        <div class="p-2.5 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30">
+          <i data-lucide="user-plus" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <h3 class="text-base font-bold text-white">Tambah Pengguna Admin Baru</h3>
+          <p class="text-xs text-slate-400">Buat akun petugas dinas baru untuk login ke sistem.</p>
+        </div>
+      </div>
+
+      <form @submit.prevent="saveNewAdminUser()">
+        <div class="space-y-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">Nama Pengguna (Username)</label>
+            <input type="text" x-model="createUserForm.username" required placeholder="Contoh: petugas_dinas atau staf_wisata" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500" />
+            <span class="text-[10px] text-slate-400 mt-1 block">Minimal 3 karakter tanpa spasi.</span>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">Kata Sandi (Password)</label>
+            <input type="password" x-model="createUserForm.password" required placeholder="••••••••" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500" />
+            <span class="text-[10px] text-slate-400 mt-1 block">Minimal 6 karakter demi keamanan akun dinas.</span>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">Ulangi Kata Sandi (Konfirmasi)</label>
+            <input type="password" x-model="createUserForm.confirmPassword" required placeholder="••••••••" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500" />
+          </div>
+
+          <div class="p-3 bg-amber-950/30 border border-amber-500/20 rounded-xl text-[11px] text-amber-200/90 leading-relaxed">
+            <span class="font-bold text-amber-400">Informasi Keamanan:</span> Kata sandi akan otomatis dienkripsi secara satu arah menggunakan algoritma Bcrypt (10 salt rounds) sebelum disimpan ke basis data SQLite.
+          </div>
+
+          <div class="pt-3 flex justify-end gap-2 border-t border-white/10">
+            <button type="button" @click="showCreateUserModal = false" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl">Batal</button>
+            <button type="submit" class="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold rounded-xl shadow-lg flex items-center gap-1.5">
+              <i data-lucide="check" class="w-4 h-4"></i>
+              <span>Simpan Admin Baru</span>
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- MODAL EDIT ADMIN DINAS & UBAH KATA SANDI                 -->
+  <!-- ======================================================== -->
+  <div x-show="showEditUserModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm" style="display: none;">
+    <div class="bg-slate-900 border border-white/15 rounded-2xl max-w-md w-full p-6 shadow-2xl relative">
+      <button @click="showEditUserModal = false" class="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <div class="flex items-center gap-3 mb-4">
+        <div class="p-2.5 bg-sky-500/20 text-sky-400 rounded-xl border border-sky-500/30">
+          <i data-lucide="key" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <h3 class="text-base font-bold text-white">Ubah Sandi / Data Admin</h3>
+          <p class="text-xs text-slate-400">Perbarui username atau ganti password akun dinas.</p>
+        </div>
+      </div>
+
+      <form @submit.prevent="saveEditAdminUser()">
+        <div class="space-y-4">
+          <div>
+            <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1">Nama Pengguna (Username)</label>
+            <input type="text" x-model="editUserForm.username" required class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-sky-500" />
+          </div>
+
+          <div class="border-t border-white/10 pt-3">
+            <span class="text-xs font-bold text-amber-400 uppercase tracking-wider block mb-2">Ubah Kata Sandi (Opsional)</span>
+            
+            <div class="space-y-3">
+              <div>
+                <label class="block text-[11px] font-semibold text-slate-300 mb-1">Kata Sandi Baru</label>
+                <input type="password" x-model="editUserForm.newPassword" placeholder="Kosongkan jika sandi tidak diubah" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-sky-500" />
+              </div>
+
+              <div>
+                <label class="block text-[11px] font-semibold text-slate-300 mb-1">Konfirmasi Kata Sandi Baru</label>
+                <input type="password" x-model="editUserForm.confirmPassword" placeholder="Ulangi kata sandi baru" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-sky-500" />
+              </div>
+            </div>
+
+            <p class="text-[11px] text-slate-400 mt-2 italic">
+              * Biarkan kedua kolom kata sandi di atas kosong jika Anda hanya ingin memperbarui username tanpa mengubah kata sandi lama.
+            </p>
+          </div>
+
+          <div class="pt-3 flex justify-end gap-2 border-t border-white/10">
+            <button type="button" @click="showEditUserModal = false" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl">Batal</button>
+            <button type="submit" class="px-5 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded-xl shadow-lg flex items-center gap-1.5">
+              <i data-lucide="check" class="w-4 h-4"></i>
+              <span>Simpan Perubahan</span>
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- MODAL PENGATURAN IDENTITAS SISTEM & LOGO INSTANSI       -->
+  <!-- ======================================================== -->
+  <div x-show="showSettingsModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md" style="display: none;" x-transition>
+    <div class="bg-slate-900 border border-white/20 rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl relative text-left">
+      <button @click="showSettingsModal = false" class="absolute top-5 right-5 text-slate-400 hover:text-white p-2 rounded-xl hover:bg-white/10 transition-colors">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <div class="flex items-center gap-3 mb-6">
+        <div class="p-3 bg-gradient-to-tr from-sky-600 to-indigo-600 text-white rounded-2xl shadow-lg shadow-sky-950/60">
+          <i data-lucide="palette" class="w-6 h-6"></i>
+        </div>
+        <div>
+          <h2 class="text-base sm:text-lg font-bold text-white">Identitas & Logo Panel Admin</h2>
+          <p class="text-xs text-slate-400 mt-0.5">Kustomisasi logo instansi, judul login, dan deskripsi</p>
+        </div>
+      </div>
+
+      <form @submit.prevent="saveSettings()" class="space-y-4">
+        <!-- Preview & Unggah Logo -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">Logo Instansi / Aplikasi</label>
+          <div class="flex items-center gap-4 bg-slate-950 p-4 rounded-2xl border border-white/10">
+            <template x-if="settingsForm.logoUrl">
+              <div class="w-16 h-16 rounded-xl bg-slate-900 p-2 border border-white/20 flex items-center justify-center overflow-hidden flex-shrink-0">
+                <img :src="getFormLogoUrl()" alt="Preview Logo" class="w-full h-full object-contain" />
+              </div>
+            </template>
+            <template x-if="!settingsForm.logoUrl">
+              <div class="w-16 h-16 rounded-xl bg-gradient-to-tr from-sky-600 to-indigo-600 flex items-center justify-center text-white flex-shrink-0 shadow-md">
+                <i data-lucide="shield-check" class="w-8 h-8"></i>
+              </div>
+            </template>
+
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-semibold text-white mb-1" x-text="settingsForm.logoUrl ? 'Logo Kustom Aktif' : 'Ikon Bawaan (Default)'"></p>
+              <div class="flex items-center gap-2">
+                <label class="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors inline-block">
+                  <span>Pilih File Logo</span>
+                  <input type="file" @change="uploadLogoFile($event)" accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif" class="hidden" />
+                </label>
+                <template x-if="settingsForm.logoUrl">
+                  <button type="button" @click="removeLogo()" class="px-2.5 py-1.5 bg-slate-800 hover:bg-rose-900/40 text-slate-300 hover:text-rose-300 rounded-lg text-xs transition-colors">
+                    Hapus Logo
+                  </button>
+                </template>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Tautan URL Berkas Logo (Opsional)</label>
+          <input type="text" x-model="settingsForm.logoUrl" placeholder="/uploads/nama_logo.png atau URL web" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-sky-500 font-mono" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Nama Aplikasi / Judul Login</label>
+          <input type="text" x-model="settingsForm.appTitle" required placeholder="Contoh: Dinas Pariwisata & Kebudayaan" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-sky-500" />
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Sub-Judul / Keterangan Login</label>
+          <input type="text" x-model="settingsForm.appSubtitle" placeholder="Contoh: Portal Resmi Tur Virtual 360°" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-sky-500" />
+        </div>
+
+        <div class="mt-6 pt-4 border-t border-white/10 flex items-center justify-end gap-3">
+          <button type="button" @click="showSettingsModal = false" class="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-white transition-colors">
+            Batal
+          </button>
+          <button type="submit" :disabled="settingsLoading" class="px-5 py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-semibold shadow-lg transition-colors flex items-center gap-2">
+            <template x-if="settingsLoading">
+              <div class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+            </template>
+            <span>Simpan Perubahan Identitas</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- APLIKASI ALPINE.JS DENGAN PERBAIKAN BUG LENGKAP -->
+  <script>
+    function adminApp() {
+      return {
+        // Normalisasi URL jika sistem berada pada subfolder cPanel (/tur360)
+        fixUrl(url) {
+          if (!url) return '';
+          if (window.APP_BASE && url.startsWith('/') && !url.startsWith(window.APP_BASE)) {
+            return window.APP_BASE + url;
+          }
+          return url;
+        },
+
+        isAuthenticated: false,
+        currentUser: null,
+        loading: false,
+        activeTab: 'destinations',
+        showPassword: false,
+
+        // Status Upload Berkas Panorama 360 & Progress Riil
+        uploadingPano: false,
+        panoUploadStatus: 'Mengunggah foto 360...',
+        panoUploadPercent: 0,
+        localPanoPreview: '',
+
+        getPanoPreviewUrl() {
+          if (this.localPanoPreview) return this.localPanoPreview;
+          if (this.sceneForm && this.sceneForm.image_url) return this.fixUrl(this.sceneForm.image_url);
+          return this.fixUrl('/uploads/alun_alun_taman.jpg');
+        },
+
+        // Pengaturan Identitas & Logo Sistem
+        settings: {
+          appTitle: 'Panel Administrator',
+          appSubtitle: 'Kelola data tur virtual 360° interaktif',
+          logoUrl: '',
+          updatedAt: Date.now(),
+        },
+        settingsForm: {
+          appTitle: '',
+          appSubtitle: '',
+          logoUrl: '',
+        },
+        showSettingsModal: false,
+        settingsLoading: false,
+        cacheBuster: Date.now(),
+
+        getLogoUrl() {
+          if (!this.settings || !this.settings.logoUrl) return '';
+          const raw = String(this.settings.logoUrl).trim();
+          if (!raw) return '';
+          if (raw.startsWith('data:')) return raw;
+          const url = this.fixUrl(raw);
+          const sep = url.includes('?') ? '&' : '?';
+          const ver = this.settings.updatedAt || this.cacheBuster || Date.now();
+          return `${url}${sep}t=${ver}`;
+        },
+
+        getFormLogoUrl() {
+          if (!this.settingsForm || !this.settingsForm.logoUrl) return '';
+          const raw = String(this.settingsForm.logoUrl).trim();
+          if (!raw) return '';
+          if (raw.startsWith('data:')) return raw;
+          const url = this.fixUrl(raw);
+          const sep = url.includes('?') ? '&' : '?';
+          return `${url}${sep}t=${this.cacheBuster}`;
+        },
+
+        onLogoError() {
+          console.warn('Logo kustom tidak dapat dimuat, kembali ke ikon bawaan.');
+        },
+
+        removeLogo() {
+          this.settingsForm.logoUrl = '';
+          this.cacheBuster = Date.now();
+          this.showNotification('Logo dihapus dari formulir. Klik Simpan untuk menerapkan.', 'info');
+        },
+        
+        // Data Pengguna Admin Dinas (CRUD)
+        adminUsers: [],
+        adminUsersLoading: false,
+        seedLoading: false,
+        showCreateUserModal: false,
+        showEditUserModal: false,
+        createUserForm: { username: '', password: '', confirmPassword: '' },
+        editUserForm: { id: null, username: '', newPassword: '', confirmPassword: '' },
+
+        destinations: [],
+        selectedDestinationId: null,
+        selectedDestination: null,
+        currentScenes: [],
+        
+        selectedSceneId: null,
+        activeSceneHotspots: [],
+        editorViewer: null,
+        activePanoPitch: 0.0,
+        activePanoYaw: 0.0,
+
+        toast: { visible: false, message: '', type: 'success' },
+
+        showDbModal: false,
+        dbInfo: null,
+
+        activeDbTable: 'Destination',
+        dbTableData: [],
+        dbTableLoading: false,
+        showJsonView: false,
+
+        graphAnalysisData: null,
+        graphLoading: false,
+
+        loginForm: { username: '', password: '' },
+        
+        showDestModal: false,
+        destForm: { id: null, title: '', slug: '', description: '', thumbnail_url: '' },
+
+        showSceneModal: false,
+        sceneForm: { id: null, destination_id: '', title: '', image_url: '', pitch: 0, yaw: 0, hfov: 100, is_starting_scene: false },
+
+        editingHotspotId: null,
+        hotspotForm: { type: 'nav', target_scene_id: '', tooltip_text: '', pitch: 0, yaw: 0 },
+
+        async initApp() {
+          this.loadSavedSettingsFromLocal();
+          await this.fetchSettings();
+          await this.checkAuth();
+          if (this.isAuthenticated) {
+            await this.loadDestinations();
+            await this.fetchAdminUsers();
+          }
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        loadSavedSettingsFromLocal() {
+          try {
+            const raw = localStorage.getItem('tur360_identity_settings');
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (parsed && typeof parsed === 'object') {
+                this.settings = { ...this.settings, ...parsed };
+                this.settingsForm = { ...this.settings };
+              }
+            }
+          } catch (e) {}
+        },
+
+        async fetchSettings() {
+          try {
+            const res = await fetch(`/api/system/settings?_t=${Date.now()}`, {
+              cache: 'no-store',
+              headers: { 'Cache-Control': 'no-cache' }
+            });
+            const data = await res.json();
+            if (data.success && data.settings) {
+              this.cacheBuster = Date.now();
+              this.settings = { ...this.settings, ...data.settings };
+              this.settingsForm = {
+                appTitle: this.settings.appTitle || 'Panel Administrator',
+                appSubtitle: this.settings.appSubtitle || 'Kelola data tur virtual 360° interaktif',
+                logoUrl: this.settings.logoUrl || '',
+              };
+              try {
+                localStorage.setItem('tur360_identity_settings', JSON.stringify(this.settings));
+              } catch (e) {}
+            }
+          } catch (e) {
+            console.error('Peringatan memuat pengaturan identitas:', e);
+          }
+        },
+
+        openSettingsModal() {
+          this.settingsForm = {
+            appTitle: this.settings.appTitle || 'Panel Administrator',
+            appSubtitle: this.settings.appSubtitle || 'Kelola data tur virtual 360° interaktif',
+            logoUrl: this.settings.logoUrl || '',
+          };
+          this.cacheBuster = Date.now();
+          this.showSettingsModal = true;
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        async uploadLogoFile(event) {
+          const file = event.target.files[0];
+          if (!file) return;
+
+          const fileName = file.name.toLowerCase();
+          if (fileName.endsWith('.insp')) {
+            this.showNotification('Format .insp adalah foto panorama 360° Insta360, bukan logo! Harap gunakan format gambar (.png, .jpg, .webp, .svg).', 'error');
+            event.target.value = '';
+            return;
+          }
+
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            this.settingsForm.logoUrl = e.target.result;
+            this.cacheBuster = Date.now();
+          };
+          reader.readAsDataURL(file);
+
+          try {
+            this.showNotification('Mengunggah berkas logo...');
+            const formData = new FormData();
+            formData.append('panorama', file);
+
+            const res = await fetch('/api/upload', {
+              method: 'POST',
+              body: formData,
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.cacheBuster = Date.now();
+              this.settingsForm.logoUrl = data.url;
+              this.settings.logoUrl = data.url;
+              this.settings.updatedAt = this.cacheBuster;
+              try {
+                localStorage.setItem('tur360_identity_settings', JSON.stringify(this.settings));
+              } catch (e) {}
+              this.showNotification('Berkas logo berhasil diunggah! Klik "Simpan Perubahan Identitas" untuk menerapkan.');
+            } else {
+              this.showNotification(data.message, 'error');
+            }
+          } catch (e) {
+            this.showNotification('Gagal mengunggah logo ke server, pratinjau lokal tetap aktif.', 'error');
+          } finally {
+            event.target.value = '';
+          }
+        },
+
+        async saveSettings() {
+          this.settingsLoading = true;
+          try {
+            const payload = {
+              appTitle: (this.settingsForm.appTitle || '').trim() || 'Panel Administrator',
+              appSubtitle: (this.settingsForm.appSubtitle || '').trim() || 'Kelola data tur virtual 360° interaktif',
+              logoUrl: (this.settingsForm.logoUrl || '').trim(),
+            };
+
+            this.cacheBuster = Date.now();
+            this.settings = { ...this.settings, ...payload, updatedAt: this.cacheBuster };
+            this.settingsForm = { ...this.settings };
+            try {
+              localStorage.setItem('tur360_identity_settings', JSON.stringify(this.settings));
+            } catch (e) {}
+
+            const res = await fetch('/api/system/settings', {
+              method: 'PUT',
+              headers: { 
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-cache' 
+              },
+              body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (data.success && data.settings) {
+              this.cacheBuster = Date.now();
+              this.settings = { ...this.settings, ...data.settings, updatedAt: this.cacheBuster };
+              this.settingsForm = { ...this.settings };
+              try {
+                localStorage.setItem('tur360_identity_settings', JSON.stringify(this.settings));
+              } catch (e) {}
+            }
+
+            this.showNotification('Identitas dan logo berhasil disimpan secara permanen di database!', 'success');
+            this.showSettingsModal = false;
+            this.$nextTick(() => lucide.createIcons());
+          } catch (e) {
+            console.error('Error simpan pengaturan:', e);
+            this.showNotification('Identitas dan logo berhasil disimpan di browser lokal!', 'success');
+            this.showSettingsModal = false;
+          } finally {
+            this.settingsLoading = false;
+          }
+        },
+
+        showNotification(message, type = 'success') {
+          this.toast = { visible: true, message, type };
+          this.$nextTick(() => lucide.createIcons());
+          setTimeout(() => { this.toast.visible = false; }, 3000);
+        },
+
+        // --- MANAJEMEN ADMIN DINAS (CRUD) ---
+        async switchTabToAdminUsers() {
+          this.activeTab = 'users';
+          await this.fetchAdminUsers();
+        },
+
+        async fetchAdminUsers() {
+          this.adminUsersLoading = true;
+          try {
+            const res = await fetch('/api/admin-users');
+            const data = await res.json();
+            if (data.success) {
+              this.adminUsers = data.users || [];
+            } else {
+              this.showNotification('Gagal memuat daftar admin: ' + data.message, 'error');
+            }
+          } catch (e) {
+            this.showNotification('Gagal terhubung ke server', 'error');
+          } finally {
+            this.adminUsersLoading = false;
+            this.$nextTick(() => lucide.createIcons());
+          }
+        },
+
+        openCreateUserModal() {
+          this.createUserForm = { username: '', password: '', confirmPassword: '' };
+          this.showCreateUserModal = true;
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        async saveNewAdminUser() {
+          if (!this.createUserForm.username || !this.createUserForm.password) {
+            this.showNotification('Username dan kata sandi wajib diisi!', 'error');
+            return;
+          }
+          if (this.createUserForm.username.trim().length < 3) {
+            this.showNotification('Username minimal 3 karakter!', 'error');
+            return;
+          }
+          if (this.createUserForm.password.length < 6) {
+            this.showNotification('Kata sandi minimal 6 karakter demi keamanan akun dinas!', 'error');
+            return;
+          }
+          if (this.createUserForm.password !== this.createUserForm.confirmPassword) {
+            this.showNotification('Konfirmasi kata sandi tidak cocok!', 'error');
+            return;
+          }
+
+          try {
+            const res = await fetch('/api/admin-users', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                username: this.createUserForm.username.trim(),
+                password: this.createUserForm.password,
+              }),
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.showNotification(data.message, 'success');
+              this.showCreateUserModal = false;
+              await this.fetchAdminUsers();
+            } else {
+              this.showNotification(data.message, 'error');
+            }
+          } catch (e) {
+            this.showNotification('Gagal menyimpan admin baru', 'error');
+          }
+        },
+
+        openEditUserModal(user) {
+          this.editUserForm = {
+            id: user.id,
+            username: user.username,
+            newPassword: '',
+            confirmPassword: '',
+          };
+          this.showEditUserModal = true;
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        async saveEditAdminUser() {
+          if (!this.editUserForm.username || this.editUserForm.username.trim().length < 3) {
+            this.showNotification('Username minimal 3 karakter!', 'error');
+            return;
+          }
+          if (this.editUserForm.newPassword) {
+            if (this.editUserForm.newPassword.length < 6) {
+              this.showNotification('Kata sandi baru minimal 6 karakter!', 'error');
+              return;
+            }
+            if (this.editUserForm.newPassword !== this.editUserForm.confirmPassword) {
+              this.showNotification('Konfirmasi kata sandi baru tidak cocok!', 'error');
+              return;
+            }
+          }
+
+          try {
+            const payload = { username: this.editUserForm.username.trim() };
+            if (this.editUserForm.newPassword) {
+              payload.password = this.editUserForm.newPassword;
+            }
+
+            const res = await fetch(`/api/admin-users/${this.editUserForm.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.showNotification(data.message, 'success');
+              this.showEditUserModal = false;
+              if (this.currentUser && this.currentUser.id === this.editUserForm.id) {
+                this.currentUser.username = data.user.username;
+              }
+              await this.fetchAdminUsers();
+            } else {
+              this.showNotification(data.message, 'error');
+            }
+          } catch (e) {
+            this.showNotification('Gagal memperbarui data admin', 'error');
+          }
+        },
+
+        async deleteAdminUser(id, username) {
+          if (!confirm(`Apakah Anda yakin ingin menghapus akun admin dinas "${username}"?`)) {
+            return;
+          }
+
+          try {
+            const res = await fetch(`/api/admin-users/${id}`, {
+              method: 'DELETE',
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.showNotification(data.message, 'success');
+              await this.fetchAdminUsers();
+            } else {
+              this.showNotification(data.message, 'error');
+            }
+          } catch (e) {
+            this.showNotification('Gagal menghapus admin', 'error');
+          }
+        },
+
+        async openDbModal() {
+          try {
+            const res = await fetch('/api/system/db-info');
+            const data = await res.json();
+            if (data.success) {
+              this.dbInfo = data;
+              this.showDbModal = true;
+              this.$nextTick(() => lucide.createIcons());
+            } else {
+              this.showNotification('Gagal mengambil info database', 'error');
+            }
+          } catch (e) {
+            this.showNotification('Koneksi ke database bermasalah', 'error');
+          }
+        },
+
+        async switchTabToDatabase() {
+          this.activeTab = 'database';
+          await this.fetchDbTable(this.activeDbTable);
+        },
+
+        async selectDbTable(tableName) {
+          this.activeDbTable = tableName;
+          await this.fetchDbTable(tableName);
+        },
+
+        async fetchDbTable(tableName) {
+          this.dbTableLoading = true;
+          try {
+            const res = await fetch(`/api/system/tables/${tableName}`);
+            const data = await res.json();
+            if (data.success) {
+              this.dbTableData = data.data || [];
+            } else {
+              this.showNotification('Gagal memuat data tabel: ' + data.message, 'error');
+            }
+          } catch (e) {
+            this.showNotification('Terjadi kesalahan koneksi tabel', 'error');
+          } finally {
+            this.dbTableLoading = false;
+            this.$nextTick(() => lucide.createIcons());
+          }
+        },
+
+        toggleJsonView() {
+          this.showJsonView = !this.showJsonView;
+        },
+
+        async switchTabToGraph() {
+          this.activeTab = 'graph';
+          await this.fetchGraphAnalysis();
+        },
+
+        async fetchGraphAnalysis() {
+          const destId = this.selectedDestinationId || (this.destinations[0]?.id);
+          if (!destId) return;
+
+          this.graphLoading = true;
+          try {
+            const res = await fetch(`/api/system/graph-analysis/${destId}`);
+            const data = await res.json();
+            if (data.success) {
+              this.graphAnalysisData = data;
+            } else {
+              this.showNotification('Gagal menganalisis graf: ' + data.message, 'error');
+            }
+          } catch (e) {
+            this.showNotification('Terjadi kesalahan komputasi graf', 'error');
+          } finally {
+            this.graphLoading = false;
+            this.$nextTick(() => lucide.createIcons());
+          }
+        },
+
+        async checkAuth() {
+          try {
+            const res = await fetch('/api/auth/me');
+            const data = await res.json();
+            if (data.success) {
+              this.isAuthenticated = true;
+              this.currentUser = data.user;
+            }
+          } catch (e) {
+            this.isAuthenticated = false;
+          }
+        },
+
+        async login() {
+          this.loading = true;
+          try {
+            const res = await fetch('/api/auth/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(this.loginForm),
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.isAuthenticated = true;
+              this.currentUser = data.user;
+              this.showNotification('Login berhasil! Selamat datang.');
+              await this.loadDestinations();
+              await this.fetchAdminUsers();
+            } else {
+              this.showNotification(data.message, 'error');
+            }
+          } catch (e) {
+            this.showNotification('Gagal terhubung ke server', 'error');
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        async logout() {
+          await fetch('/api/auth/logout', { method: 'POST' });
+          this.isAuthenticated = false;
+          this.currentUser = null;
+          this.showNotification('Anda telah keluar.');
+        },
+
+        async loadDestinations() {
+          try {
+            const res = await fetch('/api/destinations');
+            const json = await res.json();
+            if (json.success) {
+              this.destinations = json.data;
+              if (this.destinations.length > 0 && !this.selectedDestinationId) {
+                this.selectDestinationForScenes(this.destinations[0], false);
+              }
+            }
+          } catch (e) {
+            this.showNotification('Gagal memuat daftar destinasi', 'error');
+          }
+        },
+
+        selectDestinationForScenes(dest, switchTab = true) {
+          this.selectedDestinationId = dest.id;
+          this.selectedDestination = dest;
+          this.currentScenes = dest.scenes || [];
+          if (switchTab) this.activeTab = 'scenes';
+          if (this.currentScenes.length > 0) {
+            this.selectedSceneId = this.currentScenes[0].id;
+          }
+        },
+
+        onDestinationChange() {
+          const dest = this.destinations.find(d => d.id === this.selectedDestinationId);
+          if (dest) this.selectDestinationForScenes(dest, false);
+        },
+
+        selectSceneForHotspots(scene) {
+          this.selectedSceneId = scene.id;
+          this.activeTab = 'hotspots';
+          this.onSceneSelectForHotspotEditor();
+        },
+
+        onSceneSelectForHotspotEditor() {
+          const scene = this.currentScenes.find(s => s.id === this.selectedSceneId);
+          if (!scene) return;
+
+          this.fetchSceneDetail(scene.id);
+          this.$nextTick(() => {
+            this.mountEditorViewer(scene);
+          });
+        },
+
+        async fetchSceneDetail(sceneId) {
+          try {
+            const res = await fetch(`/api/scenes/${sceneId}`);
+            const data = await res.json();
+            if (data.success) {
+              this.activeSceneHotspots = data.data.hotspots || [];
+              this.$nextTick(() => lucide.createIcons());
+            }
+          } catch (e) {}
+        },
+
+        mountEditorViewer(scene) {
+          const el = document.getElementById('hotspot-editor-panorama');
+          if (!el) return;
+
+          el.innerHTML = '';
+          try {
+            this.editorViewer = pannellum.viewer('hotspot-editor-panorama', {
+              type: 'equirectangular',
+              panorama: this.fixUrl(scene.image_url),
+              pitch: scene.pitch || 0,
+              yaw: scene.yaw || 0,
+              hfov: scene.hfov || 100,
+              autoLoad: true,
+              showControls: true,
+              compass: false,
+            });
+
+            // Klik pada foto 360 otomatis membaca Pitch dan Yaw
+            el.addEventListener('mouseup', () => {
+              if (this.editorViewer) {
+                const pitch = parseFloat(this.editorViewer.getPitch().toFixed(1));
+                const yaw = parseFloat(this.editorViewer.getYaw().toFixed(1));
+                this.activePanoPitch = pitch;
+                this.activePanoYaw = yaw;
+                this.hotspotForm.pitch = pitch;
+                this.hotspotForm.yaw = yaw;
+              }
+            });
+
+            setInterval(() => {
+              if (this.editorViewer) {
+                try {
+                  this.activePanoPitch = parseFloat(this.editorViewer.getPitch().toFixed(1));
+                  this.activePanoYaw = parseFloat(this.editorViewer.getYaw().toFixed(1));
+                } catch(e){}
+              }
+            }, 300);
+
+          } catch (e) {
+            console.error('Pannellum editor mount error:', e);
+          }
+        },
+
+        syncCoordinatesFromPano() {
+          if (this.editorViewer) {
+            const pitch = parseFloat(this.editorViewer.getPitch().toFixed(1));
+            const yaw = parseFloat(this.editorViewer.getYaw().toFixed(1));
+            this.hotspotForm.pitch = pitch;
+            this.hotspotForm.yaw = yaw;
+            this.showNotification(`Koordinat diambil: Pitch ${pitch}°, Yaw ${yaw}°`);
+          }
+        },
+
+        // --- DESTINASI CRUD ---
+        openDestinationModal(dest = null) {
+          if (dest) {
+            this.destForm = { ...dest };
+          } else {
+            this.destForm = { id: null, title: '', slug: '', description: '', thumbnail_url: '/uploads/alun_alun_taman.jpg' };
+          }
+          this.showDestModal = true;
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        autoSlug() {
+          if (!this.destForm.id) {
+            this.destForm.slug = this.destForm.title
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/(^-|-$)+/g, '');
+          }
+        },
+
+        async saveDestination() {
+          const isEdit = !!this.destForm.id;
+          const url = isEdit ? `/api/destinations/${this.destForm.id}` : '/api/destinations';
+          const method = isEdit ? 'PUT' : 'POST';
+
+          try {
+            const res = await fetch(url, {
+              method,
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(this.destForm),
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.showNotification(data.message);
+              this.showDestModal = false;
+              await this.loadDestinations();
+            } else {
+              this.showNotification(data.message, 'error');
+            }
+          } catch (e) {
+            this.showNotification('Gagal menyimpan data destinasi', 'error');
+          }
+        },
+
+        async deleteDestination(id) {
+          if (!confirm('Apakah Anda yakin ingin menghapus destinasi ini beserta seluruh scene di dalamnya?')) return;
+          try {
+            const res = await fetch(`/api/destinations/${id}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+              this.showNotification(data.message);
+              await this.loadDestinations();
+            } else {
+              this.showNotification(data.message, 'error');
+            }
+          } catch (e) {
+            this.showNotification('Gagal menghapus destinasi', 'error');
+          }
+        },
+
+        async triggerSeedData() {
+          this.seedLoading = true;
+          try {
+            const res = await fetch('/api/system/seed', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+              this.showNotification(data.message, 'success');
+              await this.loadDestinations();
+              await this.fetchAdminUsers();
+            } else {
+              this.showNotification(data.message, 'error');
+            }
+          } catch (e) {
+            this.showNotification('Gagal memuat data bawaan', 'error');
+          } finally {
+            this.seedLoading = false;
+            this.$nextTick(() => lucide.createIcons());
+          }
+        },
+
+        // --- SCENE CRUD ---
+        openSceneModal(scene = null) {
+          this.localPanoPreview = '';
+          this.uploadingPano = false;
+          this.panoUploadPercent = 0;
+          if (scene) {
+            this.sceneForm = {
+              id: scene.id,
+              destination_id: scene.destination_id || this.selectedDestinationId || (this.destinations[0]?.id || ''),
+              title: scene.title || '',
+              image_url: scene.image_url || '',
+              pitch: (scene.pitch !== undefined && scene.pitch !== null) ? Number(scene.pitch) : 0,
+              yaw: (scene.yaw !== undefined && scene.yaw !== null) ? Number(scene.yaw) : 0,
+              hfov: (scene.hfov !== undefined && scene.hfov !== null) ? Number(scene.hfov) : 100,
+              is_starting_scene: Boolean(scene.is_starting_scene),
+            };
+          } else {
+            this.sceneForm = {
+              id: null,
+              destination_id: this.selectedDestinationId || (this.destinations[0]?.id || ''),
+              title: '',
+              image_url: '/uploads/alun_alun_taman.jpg',
+              pitch: 0,
+              yaw: 0,
+              hfov: 100,
+              is_starting_scene: this.currentScenes.length === 0,
+            };
+          }
+          this.showSceneModal = true;
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        async compressPanoramaClientSide(file) {
+          if (file.size <= 3.5 * 1024 * 1024 && !file.name.toLowerCase().endsWith('.insp')) {
+            return file;
+          }
+
+          return new Promise((resolve) => {
+            const img = new Image();
+            img.src = URL.createObjectURL(file);
+            img.onload = () => {
+              URL.revokeObjectURL(img.src);
+              const canvas = document.createElement('canvas');
+              let width = img.width;
+              let height = img.height;
+
+              if (width > 4096) {
+                height = Math.round((height * 4096) / width);
+                width = 4096;
+              }
+
+              canvas.width = width;
+              canvas.height = height;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0, width, height);
+
+              canvas.toBlob((blob) => {
+                if (blob && blob.size < file.size) {
+                  const compressedFile = new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), {
+                    type: 'image/jpeg',
+                    lastModified: Date.now(),
+                  });
+                  resolve(compressedFile);
+                } else {
+                  resolve(file);
+                }
+              }, 'image/jpeg', 0.82);
+            };
+            img.onerror = () => resolve(file);
+          });
+        },
+
+        async uploadDestThumbnail(event) {
+          const file = event.target.files[0];
+          if (!file) return;
+
+          try {
+            this.showNotification('Mengoptimasi & mengunggah thumbnail...');
+            const readyFile = await this.compressPanoramaClientSide(file);
+            const formData = new FormData();
+            formData.append('panorama', readyFile);
+
+            const res = await fetch('/api/upload', {
+              method: 'POST',
+              body: formData,
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.destForm.thumbnail_url = data.url;
+              this.showNotification('Gambar thumbnail berhasil diunggah!');
+            } else {
+              this.showNotification(data.message, 'error');
+            }
+          } catch (e) {
+            this.showNotification('Gagal mengunggah gambar', 'error');
+          }
+        },
+
+        async uploadPanoramaFile(event) {
+          const file = event.target.files[0];
+          if (!file) return;
+
+          this.uploadingPano = true;
+          this.panoUploadPercent = 5;
+          this.panoUploadStatus = 'Mengompresi foto 360 di browser...';
+
+          try {
+            const originalMB = (file.size / (1024 * 1024)).toFixed(1);
+            
+            // Set pratinjau lokal instan
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              this.localPanoPreview = e.target.result;
+            };
+            reader.readAsDataURL(file);
+
+            // Kompres otomatis sebelum di-upload
+            const readyFile = await this.compressPanoramaClientSide(file);
+            const finalMB = (readyFile.size / (1024 * 1024)).toFixed(1);
+            
+            this.panoUploadStatus = `Mengunggah foto teroptimasi (${finalMB} MB)...`;
+            this.panoUploadPercent = 20;
+
+            const formData = new FormData();
+            formData.append('panorama', readyFile);
+
+            // Gunakan XMLHttpRequest untuk progress bar real-time
+            await new Promise((resolve, reject) => {
+              const xhr = new XMLHttpRequest();
+              xhr.open('POST', '/api/upload', true);
+
+              xhr.upload.onprogress = (ev) => {
+                if (ev.lengthComputable) {
+                  const percent = Math.min(95, Math.round((ev.loaded / ev.total) * 100));
+                  this.panoUploadPercent = percent;
+                  this.panoUploadStatus = `Mengunggah: ${percent}%`;
+                }
+              };
+
+              xhr.onload = () => {
+                try {
+                  const data = JSON.parse(xhr.responseText);
+                  if (xhr.status >= 200 && xhr.status < 300 && data.success) {
+                    this.sceneForm.image_url = data.url;
+                    this.panoUploadPercent = 100;
+                    this.panoUploadStatus = 'Selesai diunggah!';
+                    this.showNotification(`Foto 360 berhasil diunggah! (${originalMB} MB ➜ ${finalMB} MB)`);
+                    resolve(data);
+                  } else {
+                    reject(new Error(data.message || 'Gagal mengunggah berkas'));
+                  }
+                } catch (err) {
+                  reject(err);
+                }
+              };
+
+              xhr.onerror = () => reject(new Error('Koneksi terputus saat mengunggah'));
+              xhr.send(formData);
+            });
+
+          } catch (e) {
+            this.showNotification('Gagal mengunggah foto: ' + e.message, 'error');
+          } finally {
+            setTimeout(() => {
+              this.uploadingPano = false;
+            }, 800);
+            event.target.value = '';
+          }
+        },
+
+        async saveScene() {
+          const isEdit = !!this.sceneForm.id;
+          const url = isEdit ? `/api/scenes/${this.sceneForm.id}` : '/api/scenes';
+          const method = isEdit ? 'PUT' : 'POST';
+
+          const payload = {
+            ...this.sceneForm,
+            pitch: (this.sceneForm.pitch !== '' && !isNaN(Number(this.sceneForm.pitch))) ? parseFloat(this.sceneForm.pitch) : 0,
+            yaw: (this.sceneForm.yaw !== '' && !isNaN(Number(this.sceneForm.yaw))) ? parseFloat(this.sceneForm.yaw) : 0,
+            hfov: (this.sceneForm.hfov !== '' && !isNaN(Number(this.sceneForm.hfov))) ? parseFloat(this.sceneForm.hfov) : 100,
+          };
+
+          try {
+            const res = await fetch(url, {
+              method,
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.showNotification(data.message);
+              this.showSceneModal = false;
+              await this.loadDestinations();
+              const dest = this.destinations.find(d => d.id === this.selectedDestinationId);
+              if (dest) this.selectDestinationForScenes(dest, false);
+            } else {
+              this.showNotification(data.message, 'error');
+            }
+          } catch (e) {
+            this.showNotification('Gagal menyimpan scene', 'error');
+          }
+        },
+
+        async deleteScene(id) {
+          if (!confirm('Apakah Anda yakin ingin menghapus panorama ini?')) return;
+          try {
+            const res = await fetch(`/api/scenes/${id}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+              this.showNotification(data.message);
+              await this.loadDestinations();
+              const dest = this.destinations.find(d => d.id === this.selectedDestinationId);
+              if (dest) this.selectDestinationForScenes(dest, false);
+            } else {
+              this.showNotification(data.message, 'error');
+            }
+          } catch (e) {
+            this.showNotification('Gagal menghapus scene', 'error');
+          }
+        },
+
+        // --- HOTSPOT CRUD ---
+        switchTabToHotspots() {
+          this.activeTab = 'hotspots';
+          this.$nextTick(() => {
+            this.onSceneSelectForHotspotEditor();
+          });
+        },
+
+        editHotspot(hs) {
+          this.editingHotspotId = hs.id;
+          this.hotspotForm = {
+            type: hs.type,
+            target_scene_id: hs.target_scene_id || '',
+            tooltip_text: hs.tooltip_text,
+            pitch: (hs.pitch !== undefined && hs.pitch !== null) ? Number(hs.pitch) : 0,
+            yaw: (hs.yaw !== undefined && hs.yaw !== null) ? Number(hs.yaw) : 0,
+          };
+          if (this.editorViewer) {
+            this.editorViewer.setPitch(hs.pitch);
+            this.editorViewer.setYaw(hs.yaw);
+          }
+          this.showNotification(`Memuat data titik "${hs.tooltip_text}" ke form edit. Silakan ubah lalu simpan.`, 'info');
+        },
+
+        resetHotspotForm() {
+          this.editingHotspotId = null;
+          this.hotspotForm = {
+            type: 'nav',
+            target_scene_id: '',
+            tooltip_text: '',
+            pitch: this.activePanoPitch || 0,
+            yaw: this.activePanoYaw || 0,
+          };
+        },
+
+        async saveHotspot() {
+          if (!this.selectedSceneId) {
+            this.showNotification('Pilih scene terlebih dahulu', 'error');
+            return;
+          }
+
+          if (this.hotspotForm.type === 'nav' && !this.hotspotForm.target_scene_id) {
+            this.showNotification('Harap pilih Scene Tujuan untuk hotspot jenis navigasi', 'error');
+            return;
+          }
+
+          const payload = {
+            scene_id: this.selectedSceneId,
+            ...this.hotspotForm,
+            pitch: parseFloat(this.hotspotForm.pitch) || 0,
+            yaw: parseFloat(this.hotspotForm.yaw) || 0,
+          };
+
+          const isEdit = !!this.editingHotspotId;
+          const url = isEdit ? `/api/hotspots/${this.editingHotspotId}` : '/api/hotspots';
+          const method = isEdit ? 'PUT' : 'POST';
+
+          try {
+            const res = await fetch(url, {
+              method,
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (data.success) {
+              const msg = isEdit 
+                ? '✅ Titik hotspot berhasil diperbarui di daftar bawah!' 
+                : '✅ Titik hotspot berhasil disimpan ke daftar di bawah! Formulir dikosongkan (0) agar siap menambah titik berikutnya.';
+              this.showNotification(msg, 'success');
+              this.resetHotspotForm();
+              await this.fetchSceneDetail(this.selectedSceneId);
+              await this.loadDestinations();
+            } else {
+              this.showNotification(data.message, 'error');
+            }
+          } catch (e) {
+            this.showNotification('Gagal menyimpan hotspot: ' + e.message, 'error');
+          }
+        },
+
+        async deleteHotspot(id) {
+          if (!confirm('Hapus titik hotspot ini?')) return;
+          try {
+            const res = await fetch(`/api/hotspots/${id}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+              this.showNotification(data.message);
+              await this.fetchSceneDetail(this.selectedSceneId);
+            } else {
+              this.showNotification(data.message, 'error');
+            }
+          } catch (e) {
+            this.showNotification('Gagal menghapus hotspot', 'error');
+          }
+        }
+      };
+    }
+  </script>
+</body>
+</html>
